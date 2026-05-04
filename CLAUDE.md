@@ -58,6 +58,15 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 - [ ] `generate_security_report(target)`: `analyze_project_vulnerabilities` + `run_basic_pentest` çıktısını birleştirip markdown pentest raporu üret
 - [ ] `find_exposed_secrets(directory)`: Kodda hardcode API key, token, şifre ara; `.env` dosyasının commit'e girip girmediğini kontrol et
 
+### Harici API Entegrasyonları (Öncelik Sırasıyla)
+- [ ] **Have I Been Pwned API** — `https://haveibeenpwned.com/api/v3` — `check_breach(email)` tool'u: kullanıcı mailinin veri ihlallerinde görünüp görünmediğini sorgula (ücretsiz, API key gerekiyor)
+- [ ] **Shodan API** — `https://api.shodan.io` — `check_exposure(domain)` tool'u: sunucunun dışarıdan görünen açık portlarını, servis versiyonlarını ve bilinen açıklarını getir
+- [ ] **MITRE ATT&CK** — `https://attack.mitre.org` — `get_attack_techniques(vuln)` tool'u: bir zafiyet için saldırganların gerçekte hangi taktikleri kullandığını göster
+- [ ] **AlienVault OTX API** — `https://otx.alienvault.com/api/v1` — `check_threat(ip_or_domain)` tool'u: IP/domain'in zararlı aktivite geçmişini sorgula (ücretsiz)
+- [ ] **crt.sh** — `https://crt.sh/?q=domain&output=json` — `find_subdomains(domain)` tool'u: SSL sertifika loglarından subdomain keşfi yap (ücretsiz, key gerektirmiyor)
+- [ ] **Wayback Machine API** — `https://archive.org/wayback/available?url=` — `check_history(url)` tool'u: sitenin eski versiyonlarında açıkta kalmış endpoint/config dosyası var mı ara
+- [ ] **RSS Otomasyonu** — The Hacker News + BleepingComputer feed'lerini günlük çekip `docs/wiki/news/` altına yaz, `ingest.py` ile indeksle — Claude güncel haberleri de bilsin
+
 ### Yeni Wiki Kaynakları (Öncelik Sırasıyla)
 - [ ] **OWASP API Security Top 10** — `https://github.com/OWASP/API-Security` — REST/GraphQL API kullananlar için 10 kritik zafiyet
 - [ ] **OWASP Secure Coding Practices** — `https://github.com/OWASP/secure-coding-practices-quick-reference-guide` — `analyze_project_vulnerabilities` için referans
