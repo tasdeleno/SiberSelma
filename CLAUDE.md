@@ -55,7 +55,10 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 - [ ] `check_security_headers(url)`: Siteye istek at, `CSP`, `X-Frame-Options`, `HSTS`, `Permissions-Policy` gibi güvenlik header'larının eksiklerini listele
 - [ ] `check_dependencies(file)`: `requirements.txt` / `package.json` / `pom.xml` alıp bağımlılıkları bilinen CVE'lerle karşılaştır (OWASP A06)
   - **Otomatik CVE taraması:** `server.py` her başladığında `requirements.txt`'i okuyup NVD API'sine sorsun (`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=<paket>`), yeni CVE varsa `docs/wiki/cve/CVE-XXXX-XXXXX.md` olarak otomatik oluştursun, ardından `ingest.py` çalıştırılsın — kullanıcı hiçbir şey yapmadan wiki.db güncel kalsın
-- [ ] `generate_security_report(target)`: `analyze_project_vulnerabilities` + `run_basic_pentest` çıktısını birleştirip markdown pentest raporu üret
+- [ ] `generate_security_report(url, directory)`: Orkestratör tool — sırayla tüm tool'ları çağırır ve çıktıları birleştirip `security_report_YYYY-MM-DD.md` üretir
+  - Çağıracağı tool'lar (sırayla): `run_basic_pentest` → `analyze_project_vulnerabilities` → `check_security_headers` → `check_dependencies` → `find_exposed_secrets`
+  - Rapor formatı: Özet (kritik/yüksek/orta sayısı), her tool'un bulguları, öncelik sıralı düzeltme planı
+  - Her bulguya `search_cyber_wiki` ile wiki referansı ekle
 - [ ] `find_exposed_secrets(directory)`: Kodda hardcode API key, token, şifre ara; `.env` dosyasının commit'e girip girmediğini kontrol et
 
 ### Harici API Entegrasyonları (Öncelik Sırasıyla)
