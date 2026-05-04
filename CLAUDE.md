@@ -46,10 +46,23 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 
 ## Yapılacaklar
 
+### Mevcut Tool'ları Tamamla
 - [ ] `analyze_project_vulnerabilities`: Dizindeki `.py`, `.js`, `.ts` dosyalarını tarayarak `eval`, `exec`, `innerHTML` gibi tehlikeli fonksiyonları tespit et; sonuçları `search_cyber_wiki` ile eşleştir
 - [ ] `run_basic_pentest`: Verilen URL'e HTTP isteği at, header'ları, formları, cookie'leri analiz et; wiki'deki pattern'lerle karşılaştır
 - [ ] FTS5 arama iyileştirmesi: Şu an tam phrase match çalışıyor, `"SQL Injection parameterized"` gibi multi-token sorgular boş döndürüyor — tokenizer veya AND logic ekle
-- [ ] `docs/wiki/Index.md` güncellemesi: Yeni kaynaklar eklendikçe `ingest.py` çalıştırılmalı
+
+### Yeni Tool'lar (Öncelik Sırasıyla)
+- [ ] `check_security_headers(url)`: Siteye istek at, `CSP`, `X-Frame-Options`, `HSTS`, `Permissions-Policy` gibi güvenlik header'larının eksiklerini listele
+- [ ] `check_dependencies(file)`: `requirements.txt` / `package.json` / `pom.xml` alıp bağımlılıkları bilinen CVE'lerle karşılaştır (OWASP A06)
+- [ ] `generate_security_report(target)`: `analyze_project_vulnerabilities` + `run_basic_pentest` çıktısını birleştirip markdown pentest raporu üret
+- [ ] `find_exposed_secrets(directory)`: Kodda hardcode API key, token, şifre ara; `.env` dosyasının commit'e girip girmediğini kontrol et
+
+### Yeni Wiki Kaynakları (Öncelik Sırasıyla)
+- [ ] **OWASP API Security Top 10** — `https://github.com/OWASP/API-Security` — REST/GraphQL API kullananlar için 10 kritik zafiyet
+- [ ] **OWASP Secure Coding Practices** — `https://github.com/OWASP/secure-coding-practices-quick-reference-guide` — `analyze_project_vulnerabilities` için referans
+- [ ] **Cloud Güvenliği** — `https://github.com/aquasecurity/cloudsploit` — AWS/GCP/Azure misconfiguration kontrolleri
+- [ ] **Docker Bench Security** — `https://github.com/docker/docker-bench-security` — Container deployment güvenliği
+- [ ] **Kendi Türkçe notları** — Gerçek test deneyimlerini `docs/wiki/` altına Türkçe yaz, `ingest.py` ile indeksle
 
 ---
 
