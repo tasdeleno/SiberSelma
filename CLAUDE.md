@@ -60,7 +60,6 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 
 ### Harici API Entegrasyonları (Öncelik Sırasıyla)
 - [ ] **Have I Been Pwned API** — `https://haveibeenpwned.com/api/v3` — `check_breach(email)` tool'u: kullanıcı mailinin veri ihlallerinde görünüp görünmediğini sorgula (ücretsiz, API key gerekiyor)
-- [ ] **Shodan API** — `https://api.shodan.io` — `check_exposure(domain)` tool'u: sunucunun dışarıdan görünen açık portlarını, servis versiyonlarını ve bilinen açıklarını getir
 - [ ] **MITRE ATT&CK** — `https://attack.mitre.org` — `get_attack_techniques(vuln)` tool'u: bir zafiyet için saldırganların gerçekte hangi taktikleri kullandığını göster
 - [ ] **AlienVault OTX API** — `https://otx.alienvault.com/api/v1` — `check_threat(ip_or_domain)` tool'u: IP/domain'in zararlı aktivite geçmişini sorgula (ücretsiz)
 - [ ] **crt.sh** — `https://crt.sh/?q=domain&output=json` — `find_subdomains(domain)` tool'u: SSL sertifika loglarından subdomain keşfi yap (ücretsiz, key gerektirmiyor)
