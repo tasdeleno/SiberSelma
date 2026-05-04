@@ -4,14 +4,31 @@ SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi k
 
 ---
 
-## Ne Yapar?
+## Mevcut Tool'lar
 
 | Tool | Açıklama | Durum |
 |------|----------|-------|
 | `search_cyber_wiki` | 736 wiki dosyasında tam metin arama | ✅ Aktif |
 | `get_remediation_plan` | Zafiyet için wiki'den çözüm planı getirir | ✅ Aktif |
 | `analyze_project_vulnerabilities` | Proje kodlarını statik analiz eder (SAST) | 🔜 Yakında |
-| `run_basic_pentest` | Hedef URL/IP üzerinde temel pentest taraması | 🔜 Yakında |
+| `run_basic_pentest` | Hedef URL/IP üzerinde pentest taraması | 🔜 Yakında |
+| `check_security_headers` | Sitenin HTTP güvenlik header'larını kontrol eder | 🔜 Yakında |
+| `check_dependencies` | Bağımlılıkları CVE veritabanıyla karşılaştırır | 🔜 Yakında |
+| `find_exposed_secrets` | Kodda hardcode API key / token / şifre arar | 🔜 Yakında |
+| `generate_security_report` | Tüm analizleri birleştirip rapor üretir | 🔜 Yakında |
+
+### Planlanan Harici API Entegrasyonları
+
+| Entegrasyon | Amaç |
+|-------------|------|
+| NVD API | Server başlarken otomatik CVE taraması |
+| Have I Been Pwned | Kullanıcı mail/şifre sızıntısı kontrolü |
+| VirusTotal | URL ve domain taraması |
+| MITRE ATT&CK | Saldırı taktikleri ve teknikleri |
+| AlienVault OTX | IP/domain tehdit geçmişi |
+| crt.sh | SSL loglarından subdomain keşfi |
+| Wayback Machine | Eski site versiyonlarında açık taraması |
+| RSS (THN, BleepingComputer) | Günlük güvenlik haberleri otomatik wiki'ye eklenir |
 
 ---
 
@@ -20,7 +37,7 @@ SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi k
 ### 1. Repoyu Klonla
 
 ```bash
-git clone https://github.com/kullanici-adi/SiberSelma.git
+git clone https://github.com/tasdeleno/SiberSelma.git
 cd SiberSelma
 ```
 
@@ -77,7 +94,7 @@ Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
 
 ## Kullanım
 
-Claude Desktop açıkken herhangi bir konuşmada aşağıdaki gibi kullanabilirsin:
+Claude Desktop açıkken herhangi bir konuşmada:
 
 ### Wiki'de Arama
 
@@ -131,7 +148,8 @@ perform requests on their behalf...
 SiberSelma/
 ├── server.py        # MCP sunucusu (FastMCP)
 ├── ingest.py        # Wiki dosyalarını SQLite'a indeksler
-├── wiki.db          # FTS5 arama veritabanı (ingest.py ile oluşur)
+├── wiki.db          # FTS5 arama veritabanı (ingest.py ile oluşur, .gitignore'da)
+├── CLAUDE.md        # Proje durumu ve yapılacaklar (AI session rehberi)
 ├── requirements.txt
 └── docs/
     └── wiki/        # 736+ siber güvenlik markdown dosyası
@@ -145,7 +163,7 @@ SiberSelma/
 
 ## Katkı
 
-Katkıda bulunmak için:
+`docs/wiki/` klasörüne yeni `.md` dosyası ekleyip `python ingest.py` çalıştırman yeterli — Claude anında o bilgiye erişebilir.
 
 1. Bu repoyu fork'la
 2. `docs/wiki/` klasörüne yeni markdown dosyaları ekle
