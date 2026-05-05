@@ -28,10 +28,10 @@ def ingest_with_dedup():
 
     # Veritabanındaki mevcut dosyaları al
     c.execute('SELECT filepath FROM wiki_search')
-    db_files = {row[0] for row in c.fetchall()}
+    db_files = {os.path.normpath(row[0]) for row in c.fetchall()}
 
     # Dosya sistemindeki dosyaları al
-    fs_files = set(glob.glob(f"{WIKI_DIR}/**/*.md", recursive=True))
+    fs_files = {os.path.normpath(p) for p in glob.glob(f"{WIKI_DIR}/**/*.md", recursive=True)}
 
     # Silinmiş dosyaları tespit et (veritabanında ama dosya sisteminde yok)
     deleted_files = db_files - fs_files
@@ -44,20 +44,19 @@ def ingest_with_dedup():
     count_deleted = len(deleted_files)
 
     try:
-        c.execute('BEGIN')
-
         # Silinmiş dosyaları sil
         for filepath in deleted_files:
             c.execute('DELETE FROM wiki_search WHERE filepath = ?', (filepath,))
             print(f"  [-] Silindi: {os.path.basename(filepath)}")
 
-        # Mevcut dosyaları güncelle (varsa)
+        # Mevcut dosyaları güncelle — FTS5'te UPDATE index'i güncellemez, DELETE+INSERT kullan
         for filepath in fs_files - new_files:
             try:
                 with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                    c.execute('UPDATE wiki_search SET content = ? WHERE filepath = ?', (content, filepath))
-                    count_updated += 1
+                c.execute('DELETE FROM wiki_search WHERE filepath = ?', (filepath,))
+                c.execute('INSERT INTO wiki_search (filepath, content) VALUES (?, ?)', (filepath, content))
+                count_updated += 1
             except Exception as e:
                 print(f"  [!] Güncelleme hatası: {os.path.basename(filepath)} ({e})")
 
@@ -66,9 +65,9 @@ def ingest_with_dedup():
             try:
                 with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                    c.execute('INSERT INTO wiki_search (filepath, content) VALUES (?, ?)', (filepath, content))
-                    count_new += 1
-                    print(f"  [+] Eklendi: {os.path.basename(filepath)}")
+                c.execute('INSERT INTO wiki_search (filepath, content) VALUES (?, ?)', (filepath, content))
+                count_new += 1
+                print(f"  [+] Eklendi: {os.path.basename(filepath)}")
             except Exception as e:
                 print(f"  [!] Ekleme hatası: {os.path.basename(filepath)} ({e})")
 
