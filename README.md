@@ -1,6 +1,6 @@
 # SiberSelma 🕵️‍♀️
 
-SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur. 737'den fazla siber güvenlik dokümanını indeksleyerek asistanın sorularınızı wiki tabanlı bir bilgi bankasıyla yanıtlamasını sağlar.
+SiberSelma, **Gemini**, **Claude** ve diğer yapay zeka asistanlarına siber güvenlik bilgisi kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur. 737'den fazla siber güvenlik dokümanını indeksleyerek asistanın sorularınızı wiki tabanlı bir bilgi bankasıyla yanıtlamasını sağlar.
 
 ---
 
@@ -76,7 +76,20 @@ Başarılı çıktı:
 
 ---
 
-## Claude Desktop'a Bağlama
+## Desteklenen Platformlar
+
+SiberSelma, MCP (Model Context Protocol) standardını kullanır. MCP destekleyen **tüm AI istemcileriyle** çalışır:
+
+| Platform | Konfigürasyon Dosyası | Durum |
+|----------|----------------------|-------|
+| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` | ✅ Destekleniyor |
+| Gemini CLI | `%USERPROFILE%\.gemini\settings.json` | ✅ Destekleniyor |
+| Claude Code (CLI) | Otomatik (stdio) | ✅ Destekleniyor |
+| Diğer MCP İstemcileri | İstemciye göre değişir | ✅ Destekleniyor |
+
+---
+
+### Claude Desktop Kurulumu
 
 `%APPDATA%\Claude\claude_desktop_config.json` dosyasını açıp şu satırları ekle:
 
@@ -97,9 +110,50 @@ Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
 
 ---
 
+### Gemini CLI Kurulumu
+
+`%USERPROFILE%\.gemini\settings.json` (macOS/Linux: `~/.gemini/settings.json`) dosyasını aç veya oluştur:
+
+```json
+{
+  "mcpServers": {
+    "SiberSelma": {
+      "command": "python",
+      "args": ["C:\\tam\\yol\\SiberSelma\\server.py"]
+    }
+  }
+}
+```
+
+> **Not:** Zaten başka MCP sunucuların varsa, `mcpServers` içine `"SiberSelma": { ... }` bloğunu eklemen yeterli.
+
+Doğrulama:
+```bash
+# Gemini CLI'da mevcut MCP sunucularını listele
+/mcp list
+
+# SiberSelma tool'larını test et
+@SiberSelma search_cyber_wiki "XSS"
+```
+
+---
+
+### Diğer MCP İstemcileri
+
+SiberSelma standart **stdio** transport kullanır. MCP destekleyen herhangi bir istemciye bağlamak için:
+
+```bash
+# Sunucuyu doğrudan çalıştır (stdio üzerinden iletişim kurar)
+python server.py
+```
+
+İstemcinizin MCP konfigürasyonuna `command: "python"` ve `args: ["server.py yolu"]` ekleyin.
+
+---
+
 ## Kullanım
 
-Claude Desktop açıkken herhangi bir konuşmada:
+SiberSelma tool'ları Claude Desktop, Gemini CLI veya herhangi bir MCP istemcisinde aynı şekilde çalışır.
 
 ### Wiki'de Arama
 
@@ -114,22 +168,143 @@ Claude Desktop açıkken herhangi bir konuşmada:
 ```
 @SiberSelma get_remediation_plan "IDOR"
 @SiberSelma get_remediation_plan "CSRF"
-@SiberSelma get_remediation_plan "SQL Injection"
 ```
 
-### Örnek Çıktı
+### Subdomain Keşfi
 
 ```
-=== Kaynak: README.md ===
-# Server-Side Request Forgery
+@SiberSelma find_subdomains "example.com"
+```
 
-SSRF is a vulnerability in which an attacker forces a server to
-perform requests on their behalf...
+### MITRE ATT&CK Teknik Arama
 
-=== Kaynak: SSRF_Prevention_Cheat_Sheet.md ===
-## Mitigation
-- Validate and sanitize all user-supplied URLs
-- Use allowlists for permitted domains...
+```
+@SiberSelma get_attack_techniques "phishing"
+```
+
+---
+
+## 📋 Kapsamlı Güvenlik Raporu (generate_security_report)
+
+`generate_security_report` tüm SiberSelma tool'larını sırayla çalıştırarak tek bir kapsamlı rapor üretir. Rapor `security_report_YYYY-MM-DD.md` olarak proje dizinine kaydedilir.
+
+### Ne yapar?
+
+Tek bir komutla şu analizler otomatik çalışır:
+
+| Adım | Analiz | Detay |
+|------|--------|-------|
+| 1 | **Web Uygulama Analizi** | HTTP header, cookie, form, sunucu bilgi sızıntısı |
+| 2 | **Statik Kod Analizi (SAST)** | .py/.js/.ts dosyalarında 17 tehlikeli pattern |
+| 3 | **HTTP Güvenlik Header'ları** | 10 header kontrolü + güvenlik skoru |
+| 4 | **Bağımlılık CVE Analizi** | NVD API ile requirements.txt/package.json taraması |
+| 5 | **Hardcoded Secret Tarama** | API key, token, şifre, private key + .env kontrolü |
+
+Rapor sonunda **Kritik / Yüksek / Orta** seviye özet tablosu ve öncelikli düzeltme adımları yer alır.
+
+### Claude Desktop'ta Kullanım
+
+Claude Desktop'ta SiberSelma tool'ını doğal dille çağırabilirsiniz:
+
+```
+Benim web sitemin güvenlik raporunu çıkar.
+URL: https://example.com
+Proje dizini: C:\Users\kullanici\projeler\web-app
+```
+
+Veya doğrudan tool çağrısı:
+
+```
+@SiberSelma generate_security_report "https://example.com" "C:\Users\kullanici\projeler\web-app"
+```
+
+### Gemini CLI'da Kullanım
+
+Gemini CLI'da da aynı şekilde çalışır:
+
+```
+@SiberSelma generate_security_report "https://example.com" "/home/kullanici/projeler/web-app"
+```
+
+Veya doğal dille:
+
+```
+SiberSelma'yı kullanarak https://mysite.com sitesinin ve /home/user/mysite
+projesinin güvenlik raporunu oluştur.
+```
+
+### Örnek Rapor Çıktısı
+
+```markdown
+# Güvenlik Raporu — 2026-05-06
+**Hedef URL:** https://example.com
+**Proje Dizini:** /home/user/myproject
+**Oluşturulma:** 2026-05-06 14:30
+
+---
+
+## Özet
+| Seviye | Sayı |
+|--------|------|
+| 🔴 Kritik | 2 |
+| 🟠 Yüksek | 3 |
+| 🟡 Orta | 5 |
+
+### Öncelikli Düzeltme Adımları
+1. Hardcoded secret ve CVE bulunan bağımlılıkları acilen temizle
+2. SAST bulgularındaki yüksek riskli kod pattern'lerini düzelt
+3. Eksik HTTP güvenlik header'larını ekle
+
+---
+
+## 1. Web Uygulama Analizi
+**HTTP Durum:** 200 OK
+### Güvenlik Header'ları
+**Eksik (5):** `Content-Security-Policy`, `Permissions-Policy`, ...
+
+## 2. Statik Kod Analizi (SAST)
+## SAST Tarama Sonucu — 6 bulgu, 23 dosya tarandı
+- **SQL_Injection** | `api/db.py:45` | SQL string formatting
+  `cursor.execute(f"SELECT * FROM users WHERE id={user_id}")`
+
+## 3. HTTP Güvenlik Header'ları
+**Güvenlik Skoru:** 40/100 (4/10 header mevcut)
+
+## 4. Bağımlılık CVE Analizi
+### flask — 3 CVE bulundu
+  - **CVE-2024-XXXXX** (CVSS: 7.5) — ...
+
+## 5. Hardcoded Secret Tarama
+### Bulunan Secret'lar (1)
+- **Hardcoded API key** | `config.py:12`
+  `api_key = "***REDACTED***"`
+```
+
+> **Not:** Rapor otomatik olarak `security_report_2026-05-06.md` olarak proje kök dizinine kaydedilir.
+
+### Diğer Tool Kullanım Örnekleri
+
+```bash
+# Tek bir sitenin header kontrolü
+@SiberSelma check_security_headers "https://example.com"
+
+# Proje kodunda secret tarama
+@SiberSelma find_exposed_secrets "C:\Users\kullanici\projeler\web-app"
+
+# Bağımlılıklarda bilinen CVE kontrolü
+@SiberSelma check_dependencies "C:\Users\kullanici\projeler\web-app\requirements.txt"
+
+# IP/domain tehdit kontrolü
+@SiberSelma check_threat "suspicious-domain.com"
+
+# E-posta veri ihlali kontrolü (HIBP_API_KEY gerekir)
+@SiberSelma check_breach "user@example.com"
+
+# Güncel siber güvenlik haberleri
+@SiberSelma fetch_security_news 5
+
+# Wayback Machine ile geçmiş analizi
+@SiberSelma check_history "https://example.com/.env"
 ```
 
 ---
@@ -142,13 +317,13 @@ perform requests on their behalf...
 graph LR
     A["docs/wiki/\n(737 .md dosya)"] -->|ingest.py| B["wiki.db\n(SQLite FTS5)"]
     B -->|server.py| C["MCP Server"]
-    C -->|MCP Protocol| D["Claude Desktop"]
+    C -->|MCP Protocol| D["Claude / Gemini / Diğer"]
 ```
 
 SiberSelma üç aşamada çalışır:
 1. **İndeksleme** (`ingest.py`): Wiki dosyaları SQLite FTS5 ile indekslenir
 2. **Sunucu** (`server.py`): MCP protokolü üzerinden tool'ları sunar
-3. **İstemci** (Claude Desktop): Claude bu tool'ları sorgulanırken çağırır
+3. **İstemci** (Claude Desktop, Gemini CLI, vb.): AI asistan bu tool'ları sorgulanırken çağırır
 
 ---
 
