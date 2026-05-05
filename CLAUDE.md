@@ -47,27 +47,24 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 ## Yapılacaklar
 
 ### Mevcut Tool'ları Tamamla
-- [ ] `analyze_project_vulnerabilities`: Dizindeki `.py`, `.js`, `.ts` dosyalarını tarayarak `eval`, `exec`, `innerHTML` gibi tehlikeli fonksiyonları tespit et; sonuçları `search_cyber_wiki` ile eşleştir
-- [ ] `run_basic_pentest`: Verilen URL'e HTTP isteği at, header'ları, formları, cookie'leri analiz et; wiki'deki pattern'lerle karşılaştır
-- [ ] FTS5 arama iyileştirmesi: Şu an tam phrase match çalışıyor, `"SQL Injection parameterized"` gibi multi-token sorgular boş döndürüyor — tokenizer veya AND logic ekle
+- [x] `analyze_project_vulnerabilities`: `.py/.js/.ts` dosyalarında 17 tehlikeli pattern tarar, wiki referansı ekler (2026-05-05)
+- [x] `run_basic_pentest`: HTTP isteği ile header/cookie/form/sunucu bilgisi analizi yapar, wiki referansı ekler (2026-05-05)
+- [x] FTS5 arama iyileştirmesi: AND sonuç vermezse OR fallback eklendi (2026-05-05)
 
 ### Yeni Tool'lar (Öncelik Sırasıyla)
-- [ ] `check_security_headers(url)`: Siteye istek at, `CSP`, `X-Frame-Options`, `HSTS`, `Permissions-Policy` gibi güvenlik header'larının eksiklerini listele
-- [ ] `check_dependencies(file)`: `requirements.txt` / `package.json` / `pom.xml` alıp bağımlılıkları bilinen CVE'lerle karşılaştır (OWASP A06)
-  - **Otomatik CVE taraması:** `server.py` her başladığında `requirements.txt`'i okuyup NVD API'sine sorsun (`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=<paket>`), yeni CVE varsa `docs/wiki/cve/CVE-XXXX-XXXXX.md` olarak otomatik oluştursun, ardından `ingest.py` çalıştırılsın — kullanıcı hiçbir şey yapmadan wiki.db güncel kalsın
-- [ ] `generate_security_report(url, directory)`: Orkestratör tool — sırayla tüm tool'ları çağırır ve çıktıları birleştirip `security_report_YYYY-MM-DD.md` üretir
-  - Çağıracağı tool'lar (sırayla): `run_basic_pentest` → `analyze_project_vulnerabilities` → `check_security_headers` → `check_dependencies` → `find_exposed_secrets`
-  - Rapor formatı: Özet (kritik/yüksek/orta sayısı), her tool'un bulguları, öncelik sıralı düzeltme planı
-  - Her bulguya `search_cyber_wiki` ile wiki referansı ekle
-- [ ] `find_exposed_secrets(directory)`: Kodda hardcode API key, token, şifre ara; `.env` dosyasının commit'e girip girmediğini kontrol et
+- [x] `check_security_headers(url)`: 10 güvenlik header kontrolü, skor hesaplama, bilgi sızıntısı tespiti (2026-05-05)
+- [x] `check_dependencies(file)`: NVD API ile requirements.txt/package.json CVE taraması, CVSS skorlarıyla (2026-05-05)
+  - [ ] **Otomatik CVE taraması:** `server.py` her başladığında `requirements.txt`'i okuyup NVD API'sine sorsun, yeni CVE varsa `docs/wiki/cve/CVE-XXXX-XXXXX.md` olarak otomatik oluştursun, ardından `ingest.py` çalıştırılsın
+- [x] `generate_security_report(url, directory)`: Tüm tool'ları sırayla çalıştırır, kritik/yüksek/orta özetli rapor üretir, `security_report_YYYY-MM-DD.md` olarak kaydeder (2026-05-06)
+- [x] `find_exposed_secrets(directory)`: 12 secret pattern, .env git kontrolü, otomatik redaction (2026-05-05)
 
 ### Harici API Entegrasyonları (Öncelik Sırasıyla)
-- [ ] **Have I Been Pwned API** — `https://haveibeenpwned.com/api/v3` — `check_breach(email)` tool'u: kullanıcı mailinin veri ihlallerinde görünüp görünmediğini sorgula (ücretsiz, API key gerekiyor)
-- [ ] **MITRE ATT&CK** — `https://attack.mitre.org` — `get_attack_techniques(vuln)` tool'u: bir zafiyet için saldırganların gerçekte hangi taktikleri kullandığını göster
-- [ ] **AlienVault OTX API** — `https://otx.alienvault.com/api/v1` — `check_threat(ip_or_domain)` tool'u: IP/domain'in zararlı aktivite geçmişini sorgula (ücretsiz)
-- [ ] **crt.sh** — `https://crt.sh/?q=domain&output=json` — `find_subdomains(domain)` tool'u: SSL sertifika loglarından subdomain keşfi yap (ücretsiz, key gerektirmiyor)
-- [ ] **Wayback Machine API** — `https://archive.org/wayback/available?url=` — `check_history(url)` tool'u: sitenin eski versiyonlarında açıkta kalmış endpoint/config dosyası var mı ara
-- [ ] **RSS Otomasyonu** — The Hacker News + BleepingComputer feed'lerini günlük çekip `docs/wiki/news/` altına yaz, `ingest.py` ile indeksle — Claude güncel haberleri de bilsin
+- [x] **Have I Been Pwned API** — `check_breach(email)`: HIBP_API_KEY ortam değişkeni ile çalışır, key yoksa yönlendirme mesajı verir (2026-05-06)
+- [x] **MITRE ATT&CK** — `get_attack_techniques(vuln)`: enterprise-attack STIX JSON'dan canlı sorgu yapar (2026-05-06)
+- [x] **AlienVault OTX API** — `check_threat(ip_or_domain)`: pulse/itibar/ülke/ASN bilgisi, key opsiyonel (2026-05-06)
+- [x] **crt.sh** — `find_subdomains(domain)`: SSL sertifika loglarından subdomain keşfi (2026-05-06)
+- [x] **Wayback Machine API** — `check_history(url)`: snapshot sorgusu + hassas yol taraması (2026-05-06)
+- [x] **RSS Otomasyonu** — `fetch_security_news(max_items)`: THN + BleepingComputer feed → `docs/wiki/news/` (2026-05-06)
 
 ### Yeni Wiki Kaynakları (Öncelik Sırasıyla)
 - [ ] **OWASP API Security Top 10** — `https://github.com/OWASP/API-Security` — REST/GraphQL API kullananlar için 10 kritik zafiyet

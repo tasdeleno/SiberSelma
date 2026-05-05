@@ -8,27 +8,25 @@ SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi k
 
 | Tool | Açıklama | Durum |
 |------|----------|-------|
-| `search_cyber_wiki` | 737 wiki dosyasında tam metin arama | ✅ Aktif |
+| `search_cyber_wiki` | 737 wiki dosyasında tam metin arama (AND + OR fallback) | ✅ Aktif |
 | `get_remediation_plan` | Zafiyet için wiki'den çözüm planı getirir | ✅ Aktif |
-| `analyze_project_vulnerabilities` | Proje kodlarını statik analiz eder (SAST) | 🔜 Yakında |
-| `run_basic_pentest` | Hedef URL/IP üzerinde pentest taraması | 🔜 Yakında |
-| `check_security_headers` | Sitenin HTTP güvenlik header'larını kontrol eder | 🔜 Yakında |
-| `check_dependencies` | Bağımlılıkları CVE veritabanıyla karşılaştırır | 🔜 Yakında |
-| `find_exposed_secrets` | Kodda hardcode API key / token / şifre arar | 🔜 Yakında |
-| `generate_security_report` | Tüm analizleri birleştirip rapor üretir | 🔜 Yakında |
+| `analyze_project_vulnerabilities` | .py/.js/.ts dosyalarında 17 tehlikeli pattern tarayan SAST tarayıcı | ✅ Aktif |
+| `run_basic_pentest` | HTTP header, cookie, form, sunucu bilgisi güvenlik analizi | ✅ Aktif |
+| `check_security_headers` | 10 güvenlik header kontrolü + skor + bilgi sızıntısı tespiti | ✅ Aktif |
+| `check_dependencies` | NVD API ile bağımlılık CVE taraması (CVSS skorlarıyla) | ✅ Aktif |
+| `find_exposed_secrets` | 12 pattern ile hardcode secret tarama + .env git kontrolü | ✅ Aktif |
+| `generate_security_report` | Tüm tool'ları çalıştırıp kritik/yüksek/orta özeti ile `security_report_YYYY-MM-DD.md` üretir | ✅ Aktif |
 
-### Planlanan Harici API Entegrasyonları
+### Harici API Tool'ları
 
-| Entegrasyon | Amaç |
-|-------------|------|
-| NVD API | Server başlarken otomatik CVE taraması |
-| Have I Been Pwned | Kullanıcı mail/şifre sızıntısı kontrolü |
-| VirusTotal | URL ve domain taraması |
-| MITRE ATT&CK | Saldırı taktikleri ve teknikleri |
-| AlienVault OTX | IP/domain tehdit geçmişi |
-| crt.sh | SSL loglarından subdomain keşfi |
-| Wayback Machine | Eski site versiyonlarında açık taraması |
-| RSS (THN, BleepingComputer) | Günlük güvenlik haberleri otomatik wiki'ye eklenir |
+| Tool | API | Açıklama |
+|------|-----|----------|
+| `find_subdomains(domain)` | crt.sh | SSL loglarından subdomain keşfi (key gerektirmez) |
+| `check_history(url)` | Wayback Machine | Eski versiyonlarda açık endpoint/config taraması |
+| `check_threat(ip_or_domain)` | AlienVault OTX | IP/domain tehdit geçmişi, pulse sayısı |
+| `get_attack_techniques(vuln)` | MITRE ATT&CK | Zafiyet için saldırgan taktik ve teknikleri |
+| `check_breach(email)` | Have I Been Pwned | Mail veri ihlali kontrolü (HIBP_API_KEY gerekir) |
+| `fetch_security_news(n)` | THN + BleepingComputer | RSS → `docs/wiki/news/` otomatik kayıt |
 
 ---
 
@@ -170,7 +168,7 @@ graph LR
 **Adımlar:**
 - Kullanıcı soru sorar: *"@SiberSelma search_cyber_wiki 'XSS'"*
 - Query tokenize edilir: `"XSS"` → `['XSS']`
-- SQLite FTS5 MATCH operatörü indeksen arama yapar
+- Önce AND ile aranır, sonuç yoksa OR fallback devreye girer
 - İlk 5 en uygun dosya snippet'i ile döndürülür
 - Claude yanıtını bu bilgiyle oluşturur
 

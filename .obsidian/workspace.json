@@ -1,0 +1,228 @@
+{
+  "main": {
+    "id": "fe95b24a313cbf64",
+    "type": "split",
+    "children": [
+      {
+        "id": "4f31efff1da1068d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "18727217825d08d5",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Grafik Görünümü"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "4e78638f5e363f8e",
+    "type": "split",
+    "children": [
+      {
+        "id": "d6e7444857f767bf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "fd297d1b87783cb5",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Dosya Gezgini"
+            }
+          },
+          {
+            "id": "37e71a65e66f62a2",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Ara"
+            }
+          },
+          {
+            "id": "376aa214d0e2015e",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Yer İmleri"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "66ceb3c1dd495d9f",
+    "type": "split",
+    "children": [
+      {
+        "id": "2b436e065142f600",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "965f2bf5ac19151f",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Geri Bağlantılar"
+            }
+          },
+          {
+            "id": "9ef1f0eddf7e77ed",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Giden bağlantılar"
+            }
+          },
+          {
+            "id": "32ce88e171d75903",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Etiketler"
+            }
+          },
+          {
+            "id": "9b8268b77c06b57b",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "Tüm özellikler"
+            }
+          },
+          {
+            "id": "40ff4ebd24c8a621",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Anahat"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Hızlı geçişi aç": false,
+      "graph:Grafik görünümünü aç": false,
+      "canvas:Yeni tuval oluşturun": false,
+      "daily-notes:Bugünün Notunu Aç": false,
+      "templates:Şablon ekle": false,
+      "command-palette:Komut paletini aç": false,
+      "bases:Yeni taban oluştur": false
+    }
+  },
+  "active": "18727217825d08d5",
+  "lastOpenFiles": [
+    "fetch_wiki_sources.py",
+    "docs/wiki/news/2026-05-06_FTC_to_ban_data_broker_Kochava_from_selling_Americans_locati.md",
+    "docs/wiki/news/2026-05-06_Student_hacked_Taiwan_high-speed_rail_to_trigger_emergency_b.md",
+    "docs/wiki/news/2026-05-06_DAEMON_Tools_trojanized_in_supply-chain_attack_to_deploy_bac.md",
+    "docs/wiki/news/2026-05-06_China-Linked_UAT-8302_Targets_Governments_Using_Shared_APT_M.md",
+    "docs/wiki/news/2026-05-06_DAEMON_Tools_Supply_Chain_Attack_Compromises_Official_Instal.md",
+    "docs/wiki/news/2026-05-06_Critical_Apache_HTTP2_Flaw_CVE-2026-23918_Enables_DoS_and_Po.md",
+    "docs/wiki/news",
+    "security_report_2026-05-06.md",
+    "docs/wiki/h4cker-master (1)/h4cker-master/training-reference/cheat-sheets/README.md",
+    "networking",
+    "misc",
+    "ai",
+    "docs/wiki/h4cker-master (1)/h4cker-master/training-reference/organized-tools/car-hacking_tools.md",
+    "docs/wiki/h4cker-master (1)/h4cker-master/cybersecurity-domains/cloud-container-security/cloud-resources/high_level_best_practices_pen_testing.md",
+    "docs/wiki/OWASP-CheatSheets/cheatsheets/Browser_Extension_Vulnerabilities_Cheat_Sheet.md",
+    "wiki.db-journal",
+    "docs/wiki/PentestGPT_Backend.md",
+    "docs/wiki/PentestGPT_Architecture_Patterns.md",
+    "docs/wiki/PentestGPT_SystemPrompt.md",
+    "docs/wiki/PentestGPT_Tools.md",
+    "docs/wiki/PentestGPT_Interface.md",
+    "docs/wiki/PentestGPT_Session.md",
+    "docs/wiki/PentestGPT_Events.md",
+    "docs/wiki/PentestGPT_Controller.md",
+    "docs/wiki/PentestGPT_Agent.md",
+    "docs/wiki/PentestGPT_Demo.md",
+    "docs/wiki/PentestGPT_RealWorldTests.md",
+    "docs/wiki/PentestGPT_Design_v0.15.md",
+    "docs/wiki/PentestGPT_BenchmarkRunner.md",
+    "docs/wiki/PentestGPT_Performance.md",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/legacy/pentestgpt/tasks/crawl_page_sources/dotCMS/container-api.html",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/legacy/tasks/crawl_page_sources/dotCMS/container-api.html",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/legacy/pentestgpt/utils/APIs/__init__.py",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/legacy/pentestgpt/utils/APIs/module_import.py",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/legacy/pentestgpt/utils/APIs/ollama_api.py",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/demo/install.gif",
+    "docs/wiki/PentestGPT-main/PentestGPT-main/demo/demo.gif",
+    "docs/wiki/PayloadsAllTheThings/GraphQL Injection/Images/htb-help.png",
+    "docs/wiki/PayloadsAllTheThings/Cross-Site Request Forgery/Images/CSRF-CheatSheet.png",
+    "docs/wiki/PayloadsAllTheThings/Type Juggling/Images/table_representing_behavior_of_PHP_with_loose_type_comparisons.png",
+    "docs/wiki/OWASP-CheatSheets/exploit-protection-guard.png",
+    "docs/wiki/OWASP-CheatSheets/assets/XS_Leaks_Sec_Fetch_Dest.png",
+    "docs/wiki/OWASP-CheatSheets/assets/XS_Leaks_ID.png",
+    "docs/wiki/OWASP-CheatSheets/assets/XS_Leaks_Frame_Counting.png",
+    "docs/wiki/OWASP-CheatSheets/assets/XS_Leaks_eTLD.png"
+  ]
+}

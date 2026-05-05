@@ -2,6 +2,11 @@ import os
 import re
 import glob
 import sqlite3
+import urllib.request
+import urllib.error
+import ssl
+import json
+from http.cookiejar import CookieJar
 from mcp.server.fastmcp import FastMCP
 
 # SiberSelma MCP Sunucusunu Başlatıyoruz
@@ -34,19 +39,28 @@ def search_cyber_wiki(query: str) -> str:
     tokens = re.findall(r'\w+', query)
     if not tokens:
         return f"'{query}' için geçerli arama terimi bulunamadı."
-    safe_query = " AND ".join(f'"{t}"' for t in tokens)
+
+    sql = '''
+        SELECT filepath, snippet(wiki_search, 1, '>>', '<<', '...', 64)
+        FROM wiki_search
+        WHERE wiki_search MATCH ?
+        ORDER BY rank
+        LIMIT 5
+    '''
 
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            c.execute('''
-                SELECT filepath, snippet(wiki_search, 1, '>>', '<<', '...', 64)
-                FROM wiki_search
-                WHERE wiki_search MATCH ?
-                ORDER BY rank
-                LIMIT 5
-            ''', (safe_query,))
+            # Önce AND ile dene
+            and_query = " AND ".join(f'"{t}"' for t in tokens)
+            c.execute(sql, (and_query,))
             rows = c.fetchall()
+
+            # AND sonuç vermezse OR'a düş
+            if not rows and len(tokens) > 1:
+                or_query = " OR ".join(f'"{t}"' for t in tokens)
+                c.execute(sql, (or_query,))
+                rows = c.fetchall()
 
         if not rows:
             return f"'{query}' için wiki'de sonuç bulunamadı."
@@ -60,20 +74,90 @@ def search_cyber_wiki(query: str) -> str:
     except Exception as e:
         return f"Arama sırasında hata oluştu: {str(e)}"
 
+DANGEROUS_PATTERNS = {
+    ".py": [
+        (r'\beval\s*\(', "eval()", "Code_Injection"),
+        (r'\bexec\s*\(', "exec()", "Code_Injection"),
+        (r'\bos\.system\s*\(', "os.system()", "Command_Injection"),
+        (r'\bos\.popen\s*\(', "os.popen()", "Command_Injection"),
+        (r'subprocess\.\w+\(.*shell\s*=\s*True', "subprocess shell=True", "Command_Injection"),
+        (r'pickle\.loads?\s*\(', "pickle.load()", "Deserialization"),
+        (r'yaml\.load\s*\((?!.*Loader)', "yaml.load() without SafeLoader", "Deserialization"),
+        (r'cursor\.execute\s*\(.*[fF]["\']|cursor\.execute\s*\(.*%\s*\(', "SQL string formatting", "SQL_Injection"),
+        (r'__import__\s*\(', "__import__()", "Code_Injection"),
+        (r'(password|secret|api_key|token)\s*=\s*["\'][^"\']+["\']', "hardcoded credential", "Credentials_Exposure"),
+    ],
+    ".js": [
+        (r'\beval\s*\(', "eval()", "Code_Injection"),
+        (r'\.innerHTML\s*=', "innerHTML assignment", "XSS"),
+        (r'document\.write\s*\(', "document.write()", "XSS"),
+        (r'\$\(\s*["\'].*\+', "jQuery selector injection", "XSS"),
+        (r'child_process\.exec\s*\(', "child_process.exec()", "Command_Injection"),
+        (r'new\s+Function\s*\(', "new Function()", "Code_Injection"),
+        (r'(password|secret|api_key|token)\s*=\s*["\'][^"\']+["\']', "hardcoded credential", "Credentials_Exposure"),
+    ],
+    ".ts": [],  # .js ile aynı pattern'leri paylaşır
+}
+DANGEROUS_PATTERNS[".ts"] = DANGEROUS_PATTERNS[".js"]
+
 @mcp.tool()
 def analyze_project_vulnerabilities(directory_path: str) -> str:
     """
-    Verilen projenin kod dosyalarını okuyarak asistan için statik analiz bağlamı (SAST) sağlar.
-    
+    Verilen projenin .py, .js, .ts dosyalarını tarayarak tehlikeli fonksiyon kullanımlarını tespit eder.
+
     Args:
         directory_path: Analiz edilecek projenin yerel sistemdeki tam yolu.
     """
     if not os.path.exists(directory_path):
-        return f"Hata: {directory_path} dizini bulunamadı. Lütfen geçerli bir yol girin."
-        
-    # PLACEHOLDER: İlerleyen aşamalarda burası directory içerisindeki .py, .js, .ts dosyalarını
-    # okuyup tehlikeli fonksiyonları (eval, exec, vb.) arayacak şekilde güncellenecek.
-    return f"{directory_path} dizini için analiz modülü tetiklendi. (Not: Statik kod okuyucu modülü yakında eklenecektir.)"
+        return f"Hata: {directory_path} dizini bulunamadı."
+
+    findings = []
+    scanned = 0
+
+    for ext, patterns in DANGEROUS_PATTERNS.items():
+        for filepath in glob.glob(os.path.join(directory_path, "**", f"*{ext}"), recursive=True):
+            if "node_modules" in filepath or ".venv" in filepath or "__pycache__" in filepath:
+                continue
+            scanned += 1
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+            except OSError:
+                continue
+            for line_no, line in enumerate(lines, 1):
+                for regex, label, vuln_type in patterns:
+                    if re.search(regex, line):
+                        findings.append({
+                            "file": os.path.relpath(filepath, directory_path),
+                            "line": line_no,
+                            "pattern": label,
+                            "type": vuln_type,
+                            "code": line.strip()[:120],
+                        })
+
+    if not findings:
+        return f"{scanned} dosya tarandı, tehlikeli pattern bulunamadı."
+
+    # Wiki'den referans ekle
+    vuln_types = set(f["type"] for f in findings)
+    wiki_refs = {}
+    for vt in vuln_types:
+        ref = search_cyber_wiki(vt.replace("_", " "))
+        if "sonuç bulunamadı" not in ref:
+            wiki_refs[vt] = ref.split("\n")[0]
+
+    out = [f"## SAST Tarama Sonucu — {len(findings)} bulgu, {scanned} dosya tarandı\n"]
+    for f in findings[:30]:
+        out.append(f"- **{f['type']}** | `{f['file']}:{f['line']}` | {f['pattern']}\n  `{f['code']}`")
+    if len(findings) > 30:
+        out.append(f"\n... ve {len(findings) - 30} bulgu daha.")
+
+    if wiki_refs:
+        out.append("\n### Wiki Referansları")
+        for vt, ref in wiki_refs.items():
+            out.append(f"- {vt}: {ref}")
+
+    return "\n".join(out)
 
 @mcp.tool()
 def get_remediation_plan(vulnerability_name: str) -> str:
@@ -86,20 +170,909 @@ def get_remediation_plan(vulnerability_name: str) -> str:
     # Basitçe wiki'de 'çözüm' veya 'remediation' kelimeleriyle arama yap
     return search_cyber_wiki(f"{vulnerability_name} çözüm")
 
+SECURITY_HEADERS = [
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+    "Strict-Transport-Security",
+    "Permissions-Policy",
+    "Referrer-Policy",
+    "X-XSS-Protection",
+]
+
 @mcp.tool()
 def run_basic_pentest(target: str) -> str:
     """
-    (GELECEK VİZYONU / PLACEHOLDER) Verilen hedef üzerinde temel sızma testleri veya hack taramaları gerçekleştirir.
-    
+    Verilen URL'e HTTP isteği atarak header, cookie, form ve temel güvenlik analizini yapar.
+
     Args:
-        target: IP adresi, domain veya hedef URL.
+        target: Analiz edilecek web sitesi URL'i (örn: "https://example.com")
     """
-    # UYARI: Bu kısım kullanıcının "ileride siteleri hacklemek ve pentest etmek" vizyonu için ayrılmıştır.
-    return f"SiberSelma Pentest Modülü: {target} hedefi için tarama protokolü alındı. (Uyarı: Aktif sömürü/pentest komutları ileriki güncellemelerde eklenecektir.)"
+    if not target.startswith(("http://", "https://")):
+        target = "https://" + target
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    cookie_jar = CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar),
+        urllib.request.HTTPSHandler(context=ctx),
+    )
+
+    req = urllib.request.Request(target, headers={"User-Agent": "SiberSelma/1.0"})
+    try:
+        resp = opener.open(req, timeout=10)
+    except urllib.error.HTTPError as e:
+        resp = e
+    except Exception as e:
+        return f"Bağlantı hatası: {e}"
+
+    headers = dict(resp.headers)
+    body = ""
+    try:
+        raw = resp.read()
+        body = raw.decode("utf-8", errors="ignore")[:50000]
+    except Exception:
+        pass
+
+    out = [f"## Temel Pentest Raporu — {target}\n"]
+
+    # 1) HTTP durum
+    out.append(f"**HTTP Durum:** {resp.status} {resp.reason if hasattr(resp, 'reason') else ''}")
+
+    # 2) Güvenlik header analizi
+    missing = []
+    present = []
+    for h in SECURITY_HEADERS:
+        val = headers.get(h)
+        if val:
+            present.append(f"  - {h}: `{val}`")
+        else:
+            missing.append(h)
+
+    out.append("\n### Güvenlik Header'ları")
+    if present:
+        out.append("**Mevcut:**")
+        out.extend(present)
+    if missing:
+        out.append(f"**Eksik ({len(missing)}):** " + ", ".join(f"`{h}`" for h in missing))
+
+    # 3) Cookie analizi
+    cookies = list(cookie_jar)
+    if cookies:
+        out.append(f"\n### Cookie'ler ({len(cookies)})")
+        for ck in cookies:
+            flags = []
+            if not ck.secure:
+                flags.append("Secure YOK")
+            if "httponly" not in str(ck).lower():
+                flags.append("HttpOnly YOK")
+            warning = f" ⚠ {', '.join(flags)}" if flags else ""
+            out.append(f"  - `{ck.name}={ck.value[:20]}...`{warning}")
+
+    # 4) Form tespiti
+    forms = re.findall(r'<form[^>]*action=["\']([^"\']*)["\'][^>]*>', body, re.IGNORECASE)
+    if forms:
+        out.append(f"\n### Formlar ({len(forms)})")
+        for action in forms[:10]:
+            out.append(f"  - action=`{action}`")
+
+    # 5) Server bilgisi
+    server = headers.get("Server", "")
+    powered = headers.get("X-Powered-By", "")
+    if server or powered:
+        out.append(f"\n### Sunucu Bilgisi (bilgi sızıntısı)")
+        if server:
+            out.append(f"  - Server: `{server}`")
+        if powered:
+            out.append(f"  - X-Powered-By: `{powered}`")
+
+    # 6) HTTPS kontrolü
+    if target.startswith("http://"):
+        out.append("\n⚠ **Site HTTP üzerinden erişiliyor — şifreleme yok!**")
+
+    # Wiki referansları
+    wiki_terms = []
+    if missing:
+        wiki_terms.append("security headers")
+    if any(not ck.secure for ck in cookies):
+        wiki_terms.append("cookie security")
+    if target.startswith("http://"):
+        wiki_terms.append("HTTPS TLS")
+
+    if wiki_terms:
+        out.append("\n### Wiki Referansları")
+        for term in wiki_terms:
+            ref = search_cyber_wiki(term)
+            if "sonuç bulunamadı" not in ref:
+                out.append(f"- {term}: {ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+HEADER_RECOMMENDATIONS = {
+    "Content-Security-Policy": "XSS ve veri enjeksiyonu saldırılarını önler. Önerilen: `default-src 'self'`",
+    "X-Frame-Options": "Clickjacking saldırılarını önler. Önerilen: `DENY` veya `SAMEORIGIN`",
+    "X-Content-Type-Options": "MIME-type sniffing'i önler. Önerilen: `nosniff`",
+    "Strict-Transport-Security": "HTTPS kullanımını zorunlu kılar. Önerilen: `max-age=31536000; includeSubDomains`",
+    "Permissions-Policy": "Tarayıcı özelliklerini (kamera, mikrofon vb.) kısıtlar.",
+    "Referrer-Policy": "Referrer bilgi sızıntısını kontrol eder. Önerilen: `strict-origin-when-cross-origin`",
+    "X-XSS-Protection": "Eski tarayıcılarda XSS filtresi. Önerilen: `1; mode=block`",
+    "X-Permitted-Cross-Domain-Policies": "Flash/PDF cross-domain politikasını kontrol eder. Önerilen: `none`",
+    "Cross-Origin-Opener-Policy": "Cross-origin pencere iletişimini kısıtlar. Önerilen: `same-origin`",
+    "Cross-Origin-Resource-Policy": "Cross-origin kaynak paylaşımını kısıtlar. Önerilen: `same-origin`",
+}
+
+@mcp.tool()
+def check_security_headers(url: str) -> str:
+    """
+    Bir web sitesinin HTTP güvenlik header'larını kontrol eder ve eksikleri raporlar.
+
+    Args:
+        url: Kontrol edilecek web sitesi URL'i (örn: "https://example.com")
+    """
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+    except urllib.error.HTTPError as e:
+        resp = e
+    except Exception as e:
+        return f"Bağlantı hatası: {e}"
+
+    headers = dict(resp.headers)
+
+    out = [f"## Güvenlik Header Raporu — {url}\n"]
+    missing = []
+    present = []
+
+    for header, recommendation in HEADER_RECOMMENDATIONS.items():
+        val = headers.get(header)
+        if val:
+            present.append(f"  - **{header}**: `{val}`")
+        else:
+            missing.append(f"  - **{header}**: {recommendation}")
+
+    score = len(present) * 100 // len(HEADER_RECOMMENDATIONS)
+    out.append(f"**Güvenlik Skoru:** {score}/100 ({len(present)}/{len(HEADER_RECOMMENDATIONS)} header mevcut)\n")
+
+    if present:
+        out.append(f"### Mevcut Header'lar ({len(present)})")
+        out.extend(present)
+
+    if missing:
+        out.append(f"\n### Eksik Header'lar ({len(missing)})")
+        out.extend(missing)
+
+    # Tehlikeli header'lar
+    dangerous = []
+    if headers.get("Server"):
+        dangerous.append(f"  - `Server: {headers['Server']}` — sunucu versiyonu ifşa ediliyor")
+    if headers.get("X-Powered-By"):
+        dangerous.append(f"  - `X-Powered-By: {headers['X-Powered-By']}` — framework ifşa ediliyor")
+    if headers.get("X-AspNet-Version"):
+        dangerous.append(f"  - `X-AspNet-Version: {headers['X-AspNet-Version']}` — .NET versiyonu ifşa ediliyor")
+
+    if dangerous:
+        out.append("\n### Bilgi Sızıntısı Yapan Header'lar")
+        out.extend(dangerous)
+
+    ref = search_cyber_wiki("security headers HTTP")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+
+SECRET_PATTERNS = [
+    (r'(?:password|passwd|pwd)\s*[=:]\s*["\'][^"\']{3,}["\']', "Hardcoded password"),
+    (r'(?:api_?key|apikey|api_?secret)\s*[=:]\s*["\'][^"\']{8,}["\']', "Hardcoded API key"),
+    (r'(?:secret_?key|secret)\s*[=:]\s*["\'][^"\']{8,}["\']', "Hardcoded secret key"),
+    (r'(?:access_?token|auth_?token|bearer)\s*[=:]\s*["\'][^"\']{8,}["\']', "Hardcoded token"),
+    (r'(?:aws_access_key_id)\s*[=:]\s*["\']?AKIA[0-9A-Z]{16}', "AWS Access Key"),
+    (r'(?:aws_secret_access_key)\s*[=:]\s*["\']?[A-Za-z0-9/+=]{40}', "AWS Secret Key"),
+    (r'ghp_[A-Za-z0-9]{36}', "GitHub Personal Access Token"),
+    (r'glpat-[A-Za-z0-9\-]{20,}', "GitLab Personal Access Token"),
+    (r'sk-[A-Za-z0-9]{32,}', "OpenAI/Stripe Secret Key"),
+    (r'xox[bpras]-[A-Za-z0-9\-]+', "Slack Token"),
+    (r'-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----', "Private Key"),
+    (r'(?:mysql|postgres|mongodb)://[^\s"\']+:[^\s"\']+@', "Database connection string with credentials"),
+]
+
+@mcp.tool()
+def find_exposed_secrets(directory: str) -> str:
+    """
+    Kod dosyalarında hardcoded API key, token, şifre ve private key arar. .env dosyasının git'e eklenip eklenmediğini kontrol eder.
+
+    Args:
+        directory: Taranacak proje dizininin tam yolu.
+    """
+    if not os.path.exists(directory):
+        return f"Hata: {directory} dizini bulunamadı."
+
+    findings = []
+    scanned = 0
+    scan_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rb", ".php", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".conf", ".env", ".sh", ".bat", ".ps1"}
+    skip_dirs = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build", ".tox"}
+
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in scan_extensions and fname not in {".env", ".env.local", ".env.production"}:
+                continue
+            filepath = os.path.join(root, fname)
+            scanned += 1
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+            except OSError:
+                continue
+            for line_no, line in enumerate(lines, 1):
+                if line.strip().startswith("#") or line.strip().startswith("//"):
+                    continue
+                for regex, label in SECRET_PATTERNS:
+                    if re.search(regex, line, re.IGNORECASE):
+                        findings.append({
+                            "file": os.path.relpath(filepath, directory),
+                            "line": line_no,
+                            "type": label,
+                            "snippet": re.sub(r'["\'][^"\']{4,}["\']', '"***REDACTED***"', line.strip()[:120]),
+                        })
+
+    # .env git kontrolü
+    env_warnings = []
+    gitignore_path = os.path.join(directory, ".gitignore")
+    env_in_gitignore = False
+    if os.path.exists(gitignore_path):
+        with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
+            gitignore_content = f.read()
+        env_in_gitignore = ".env" in gitignore_content
+
+    env_files = glob.glob(os.path.join(directory, ".env*"))
+    if env_files and not env_in_gitignore:
+        env_warnings.append("`.env` dosyası mevcut ama `.gitignore`'da yok — git'e commit edilmiş olabilir!")
+
+    out = [f"## Secret Tarama Raporu — {scanned} dosya tarandı\n"]
+
+    if env_warnings:
+        out.append("### .env Uyarıları")
+        for w in env_warnings:
+            out.append(f"  - {w}")
+
+    if findings:
+        out.append(f"\n### Bulunan Secret'lar ({len(findings)})")
+        for f in findings[:30]:
+            out.append(f"- **{f['type']}** | `{f['file']}:{f['line']}`\n  `{f['snippet']}`")
+        if len(findings) > 30:
+            out.append(f"\n... ve {len(findings) - 30} bulgu daha.")
+    else:
+        out.append("Hardcoded secret bulunamadı.")
+
+    ref = search_cyber_wiki("credentials exposure secrets")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+
+NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+
+def _parse_requirements_txt(filepath):
+    packages = []
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-"):
+                continue
+            match = re.match(r'^([A-Za-z0-9_\-\.]+)', line)
+            if match:
+                packages.append(match.group(1))
+    return packages
+
+def _parse_package_json(filepath):
+    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        data = json.load(f)
+    packages = []
+    for section in ("dependencies", "devDependencies"):
+        if section in data:
+            packages.extend(data[section].keys())
+    return packages
+
+@mcp.tool()
+def check_dependencies(file_path: str) -> str:
+    """
+    requirements.txt veya package.json dosyasındaki bağımlılıkları NVD API ile bilinen CVE'lere karşı kontrol eder.
+
+    Args:
+        file_path: requirements.txt veya package.json dosyasının tam yolu.
+    """
+    if not os.path.exists(file_path):
+        return f"Hata: {file_path} dosyası bulunamadı."
+
+    fname = os.path.basename(file_path).lower()
+    if fname == "requirements.txt":
+        packages = _parse_requirements_txt(file_path)
+    elif fname == "package.json":
+        try:
+            packages = _parse_package_json(file_path)
+        except json.JSONDecodeError:
+            return "Hata: package.json geçerli JSON değil."
+    else:
+        return "Hata: Desteklenen dosya tipleri: requirements.txt, package.json"
+
+    if not packages:
+        return "Dosyada bağımlılık bulunamadı."
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    out = [f"## Bağımlılık CVE Raporu — {len(packages)} paket kontrol ediliyor\n"]
+    vuln_count = 0
+    checked = 0
+    errors = 0
+
+    for pkg in packages[:20]:
+        try:
+            api_url = f"{NVD_API_URL}?keywordSearch={urllib.request.quote(pkg)}&resultsPerPage=5"
+            req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            data = json.loads(resp.read().decode("utf-8"))
+            checked += 1
+
+            total = data.get("totalResults", 0)
+            if total > 0:
+                vuln_count += 1
+                out.append(f"\n### {pkg} — {total} CVE bulundu")
+                for vuln in data.get("vulnerabilities", [])[:3]:
+                    cve = vuln.get("cve", {})
+                    cve_id = cve.get("id", "?")
+                    desc_list = cve.get("descriptions", [])
+                    desc = next((d["value"] for d in desc_list if d.get("lang") == "en"), "")[:150]
+                    metrics = cve.get("metrics", {})
+                    score = "?"
+                    for metric_key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+                        if metric_key in metrics and metrics[metric_key]:
+                            score = metrics[metric_key][0].get("cvssData", {}).get("baseScore", "?")
+                            break
+                    out.append(f"  - **{cve_id}** (CVSS: {score}) — {desc}")
+        except Exception:
+            errors += 1
+            continue
+
+    summary = f"\n---\n**Özet:** {checked}/{len(packages[:20])} paket kontrol edildi, {vuln_count} pakette CVE bulundu"
+    if errors:
+        summary += f", {errors} paket kontrol edilemedi (API hatası)"
+    if len(packages) > 20:
+        summary += f"\n⚠ İlk 20 paket kontrol edildi, toplam {len(packages)} paket var"
+    out.insert(1, summary)
+
+    return "\n".join(out)
+
+
+from datetime import datetime
+
+@mcp.tool()
+def generate_security_report(url: str, directory: str) -> str:
+    """
+    Tüm güvenlik tool'larını sırayla çalıştırarak kapsamlı bir güvenlik raporu üretir ve
+    security_report_YYYY-MM-DD.md dosyasına kaydeder.
+
+    Args:
+        url: Analiz edilecek web sitesi URL'i (örn: "https://example.com")
+        directory: Analiz edilecek proje dizininin tam yolu
+    """
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.md")
+
+    sections = []
+    critical = 0
+    high = 0
+    medium = 0
+
+    sections.append(f"# Güvenlik Raporu — {date_str}")
+    sections.append(f"**Hedef URL:** {url}  ")
+    sections.append(f"**Proje Dizini:** {directory}  ")
+    sections.append(f"**Oluşturulma:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    sections.append("---\n")
+
+    # 1) Temel Pentest
+    sections.append("## 1. Web Uygulama Analizi")
+    try:
+        pentest_result = run_basic_pentest(url)
+        sections.append(pentest_result)
+        # Basit bulgu sayacı
+        if "Eksik" in pentest_result:
+            import re as _re
+            m = _re.search(r'Eksik \((\d+)\)', pentest_result)
+            if m:
+                medium += int(m.group(1))
+    except Exception as e:
+        sections.append(f"Hata: {e}")
+
+    sections.append("\n---\n")
+
+    # 2) SAST Kod Analizi
+    sections.append("## 2. Statik Kod Analizi (SAST)")
+    try:
+        sast_result = analyze_project_vulnerabilities(directory)
+        sections.append(sast_result)
+        import re as _re
+        m = _re.search(r'(\d+) bulgu', sast_result)
+        if m:
+            count = int(m.group(1))
+            high += count // 2
+            medium += count - count // 2
+    except Exception as e:
+        sections.append(f"Hata: {e}")
+
+    sections.append("\n---\n")
+
+    # 3) Güvenlik Header'ları
+    sections.append("## 3. HTTP Güvenlik Header'ları")
+    try:
+        header_result = check_security_headers(url)
+        sections.append(header_result)
+        import re as _re
+        m = _re.search(r'Eksik Header.*?(\d+)', header_result)
+        if m:
+            medium += int(m.group(1))
+    except Exception as e:
+        sections.append(f"Hata: {e}")
+
+    sections.append("\n---\n")
+
+    # 4) Bağımlılık CVE Kontrolü
+    sections.append("## 4. Bağımlılık CVE Analizi")
+    dep_file = None
+    for candidate in ["requirements.txt", "package.json"]:
+        candidate_path = os.path.join(directory, candidate)
+        if os.path.exists(candidate_path):
+            dep_file = candidate_path
+            break
+
+    if dep_file:
+        try:
+            dep_result = check_dependencies(dep_file)
+            sections.append(dep_result)
+            import re as _re
+            m = _re.search(r'(\d+) pakette CVE', dep_result)
+            if m:
+                critical += int(m.group(1))
+        except Exception as e:
+            sections.append(f"Hata: {e}")
+    else:
+        sections.append("requirements.txt veya package.json bulunamadı.")
+
+    sections.append("\n---\n")
+
+    # 5) Secret Tarama
+    sections.append("## 5. Hardcoded Secret Tarama")
+    try:
+        secret_result = find_exposed_secrets(directory)
+        sections.append(secret_result)
+        import re as _re
+        m = _re.search(r'Bulunan Secret.*?(\d+)', secret_result)
+        if m:
+            critical += int(m.group(1))
+    except Exception as e:
+        sections.append(f"Hata: {e}")
+
+    sections.append("\n---\n")
+
+    # Özet bölümü (raporun başına ekle)
+    summary_lines = [
+        "## Özet",
+        f"| Seviye | Sayı |",
+        f"|--------|------|",
+        f"| 🔴 Kritik | {critical} |",
+        f"| 🟠 Yüksek | {high} |",
+        f"| 🟡 Orta | {medium} |",
+        "",
+        "### Öncelikli Düzeltme Adımları",
+    ]
+    if critical > 0:
+        summary_lines.append("1. Hardcoded secret ve CVE bulunan bağımlılıkları acilen temizle")
+    if high > 0:
+        summary_lines.append("2. SAST bulgularındaki yüksek riskli kod pattern'lerini düzelt")
+    if medium > 0:
+        summary_lines.append("3. Eksik HTTP güvenlik header'larını ekle")
+    summary_lines.append("\n---\n")
+
+    # Özeti başa ekle
+    full_report = "\n".join(sections[:5] + summary_lines + sections[5:])
+
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(full_report)
+        return f"{full_report}\n\n---\n**Rapor kaydedildi:** `{report_path}`"
+    except OSError as e:
+        return f"{full_report}\n\n---\nUyarı: Rapor dosyaya kaydedilemedi ({e})"
+
+
+@mcp.tool()
+def find_subdomains(domain: str) -> str:
+    """
+    crt.sh SSL sertifika loglarını kullanarak bir domain'in subdomain'lerini keşfeder.
+
+    Args:
+        domain: Taranacak domain (örn: "example.com")
+    """
+    domain = domain.strip().lstrip("https://").lstrip("http://").split("/")[0]
+    url = f"https://crt.sh/?q=%.{urllib.request.quote(domain)}&output=json"
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return f"crt.sh sorgusu basarisiz: {e}"
+
+    subdomains = set()
+    for entry in data:
+        name = entry.get("name_value", "")
+        for sub in name.split("\n"):
+            sub = sub.strip().lstrip("*.")
+            if sub.endswith(domain) and sub != domain:
+                subdomains.add(sub)
+
+    if not subdomains:
+        return f"'{domain}' icin subdomain bulunamadi."
+
+    sorted_subs = sorted(subdomains)
+    out = [f"## Subdomain Kesfedildi — {domain} ({len(sorted_subs)} adet)\n"]
+    for s in sorted_subs[:50]:
+        out.append(f"  - `{s}`")
+    if len(sorted_subs) > 50:
+        out.append(f"\n... ve {len(sorted_subs) - 50} subdomain daha.")
+
+    ref = search_cyber_wiki("subdomain enumeration OSINT")
+    if "sonuc bulunamadi" not in ref:
+        out.append(f"\n### Wiki Referansi\n{ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def check_history(url: str) -> str:
+    """
+    Wayback Machine API ile bir URL'nin gecmis snapshot'larini sorgular; eski endpoint veya konfigurasyon dosyasi olup olmadigini arastirir.
+
+    Args:
+        url: Sorgulanacak URL (örn: "https://example.com/admin")
+    """
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    api_url = f"https://archive.org/wayback/available?url={urllib.request.quote(url, safe=':/')}"
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return f"Wayback Machine sorgusu basarisiz: {e}"
+
+    snapshot = data.get("archived_snapshots", {}).get("closest", {})
+    out = [f"## Wayback Machine — {url}\n"]
+
+    if not snapshot or not snapshot.get("available"):
+        out.append("Bu URL icin arsiv kaydı bulunamadi.")
+    else:
+        ts = snapshot.get("timestamp", "")
+        archive_url = snapshot.get("url", "")
+        date_fmt = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]} {ts[8:10]}:{ts[10:12]}" if len(ts) >= 12 else ts
+        out.append(f"**En yakin snapshot:** {date_fmt}")
+        out.append(f"**Arsiv URL:** {archive_url}")
+
+        # Hassas yollari kontrol et
+        sensitive_paths = [".env", "config", "backup", "admin", ".git", "wp-config", "phpinfo", ".htaccess", "database"]
+        flagged = [p for p in sensitive_paths if p in url.lower()]
+        if flagged:
+            out.append(f"\n**Dikkat:** URL hassas yol iceriyor: {', '.join(flagged)}")
+            out.append("Bu yolun arsivde aciga cikmis icerik barindirip barindirmadigini manuel kontrol et.")
+
+    # Birden fazla yolu toplu sorgula
+    common_sensitive = [".env", ".git/config", "backup.zip", "wp-config.php", "phpinfo.php", "admin/", "robots.txt"]
+    base = url.rstrip("/")
+    base_domain = "/".join(base.split("/")[:3])
+    found_paths = []
+
+    for path in common_sensitive:
+        check_url = f"https://archive.org/wayback/available?url={urllib.request.quote(base_domain + '/' + path, safe=':/')}"
+        try:
+            r = urllib.request.urlopen(
+                urllib.request.Request(check_url, headers={"User-Agent": "SiberSelma/1.0"}),
+                timeout=8, context=ctx
+            )
+            d = json.loads(r.read().decode("utf-8"))
+            snap = d.get("archived_snapshots", {}).get("closest", {})
+            if snap.get("available"):
+                found_paths.append((path, snap.get("url", "")))
+        except Exception:
+            continue
+
+    if found_paths:
+        out.append(f"\n### Arsivde Bulunan Hassas Yollar ({len(found_paths)})")
+        for path, archive in found_paths:
+            out.append(f"  - `/{path}` → {archive}")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def check_threat(target: str) -> str:
+    """
+    AlienVault OTX API ile bir IP adresi veya domain'in tehdit gecmisini sorgular.
+
+    Args:
+        target: Sorgulanacak IP adresi veya domain (örn: "8.8.8.8" veya "example.com")
+    """
+    target = target.strip()
+    is_ip = bool(re.match(r'^\d{1,3}(\.\d{1,3}){3}$', target))
+    endpoint_type = "IPv4" if is_ip else "domain"
+    api_url = f"https://otx.alienvault.com/api/v1/indicators/{endpoint_type}/{urllib.request.quote(target)}/general"
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0", "X-OTX-API-KEY": ""})
+    try:
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam degiskeni olarak tanimlayabilirsiniz."
+        return f"OTX sorgusu basarisiz: HTTP {e.code}"
+    except Exception as e:
+        return f"OTX sorgusu basarisiz: {e}"
+
+    out = [f"## AlienVault OTX Tehdit Raporu — {target}\n"]
+
+    pulse_count = data.get("pulse_info", {}).get("count", 0)
+    reputation = data.get("reputation", 0)
+    country = data.get("country_name", "Bilinmiyor")
+    asn = data.get("asn", "")
+
+    out.append(f"**Ulke:** {country}  ")
+    out.append(f"**ASN:** {asn}  ")
+    out.append(f"**Itibar Skoru:** {reputation}  ")
+    out.append(f"**Tehdit Pulse Sayisi:** {pulse_count}\n")
+
+    if pulse_count > 0:
+        out.append("**Uyari:** Bu hedef tehdit istihbarat veri tabanlarinda yer aliyor!")
+        pulses = data.get("pulse_info", {}).get("pulses", [])[:5]
+        if pulses:
+            out.append("\n### Ilgili Tehdit Pulse'lari")
+            for p in pulses:
+                out.append(f"  - {p.get('name', '?')} ({p.get('created', '')[:10]})")
+    else:
+        out.append("Bilinen tehdit kaydı bulunamadi.")
+
+    tags = data.get("pulse_info", {}).get("related_pulse_indicator_counts", {})
+    malware = data.get("malware", [])
+    if malware:
+        out.append(f"\n**Iliskili Malware:** {len(malware)} kayit")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def get_attack_techniques(vulnerability: str) -> str:
+    """
+    MITRE ATT&CK Enterprise matrisini kullanarak bir zafiyet veya kavram icin saldirgan taktik ve tekniklerini listeler.
+
+    Args:
+        vulnerability: Aranacak zafiyet veya saldiri turu (örn: "XSS", "SQL Injection", "phishing")
+    """
+    # MITRE ATT&CK STIX/JSON endpoint (enterprise)
+    api_url = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=20, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return f"MITRE ATT&CK verisi alinamadi: {e}"
+
+    query = vulnerability.lower()
+    matches = []
+
+    for obj in data.get("objects", []):
+        if obj.get("type") != "attack-pattern":
+            continue
+        name = obj.get("name", "").lower()
+        desc = obj.get("description", "").lower()
+        if query in name or query in desc:
+            ext_refs = obj.get("external_references", [])
+            attack_id = next((r.get("external_id", "") for r in ext_refs if r.get("source_name") == "mitre-attack"), "")
+            tactic_refs = [p.get("phase_name", "") for p in obj.get("kill_chain_phases", [])]
+            matches.append({
+                "id": attack_id,
+                "name": obj.get("name", ""),
+                "tactics": tactic_refs,
+                "desc": obj.get("description", "")[:200],
+            })
+
+    if not matches:
+        return f"'{vulnerability}' icin MITRE ATT&CK'te teknik bulunamadi."
+
+    out = [f"## MITRE ATT&CK Teknikleri — '{vulnerability}' ({len(matches)} eslesme)\n"]
+    for m in matches[:10]:
+        tactics_str = ", ".join(m["tactics"]) if m["tactics"] else "bilinmiyor"
+        out.append(f"### {m['id']} — {m['name']}")
+        out.append(f"**Taktikler:** {tactics_str}")
+        out.append(f"{m['desc']}...\n")
+
+    ref = search_cyber_wiki(vulnerability)
+    if "sonuc bulunamadi" not in ref:
+        out.append(f"### Wiki Referansi\n{ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def check_breach(email: str) -> str:
+    """
+    Have I Been Pwned API ile bir e-posta adresinin veri ihlallerinde gorünüp gorunmedigini sorgular.
+    HIBP_API_KEY ortam degiskeni gereklidir.
+
+    Args:
+        email: Sorgulanacak e-posta adresi
+    """
+    api_key = os.environ.get("HIBP_API_KEY", "")
+    if not api_key:
+        return (
+            "Have I Been Pwned API key bulunamadi.\n"
+            "Lutfen HIBP_API_KEY ortam degiskenini tanimlayin:\n"
+            "  https://haveibeenpwned.com/API/Key adresinden ucretsiz key alin."
+        )
+
+    encoded = urllib.request.quote(email)
+    api_url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{encoded}?truncateResponse=false"
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(api_url, headers={
+        "User-Agent": "SiberSelma/1.0",
+        "hibp-api-key": api_key,
+    })
+    try:
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return f"'{email}' bilinen veri ihlallerinde bulunamadi."
+        if e.code == 401:
+            return "Gecersiz HIBP API key."
+        if e.code == 429:
+            return "API rate limit asıldı. Bir sure bekleyip tekrar deneyin."
+        return f"HIBP sorgusu basarisiz: HTTP {e.code}"
+    except Exception as e:
+        return f"HIBP sorgusu basarisiz: {e}"
+
+    out = [f"## Have I Been Pwned — {email}\n"]
+    out.append(f"**{len(data)} veri ihlalinde bulundu!**\n")
+
+    critical_breaches = [b for b in data if b.get("IsVerified") and not b.get("IsSensitive")]
+    for breach in sorted(critical_breaches, key=lambda x: x.get("BreachDate", ""), reverse=True)[:10]:
+        name = breach.get("Name", "?")
+        date = breach.get("BreachDate", "?")
+        pwn_count = breach.get("PwnCount", 0)
+        data_classes = ", ".join(breach.get("DataClasses", [])[:5])
+        out.append(f"### {name} ({date})")
+        out.append(f"  - Etkilenen hesap: {pwn_count:,}")
+        out.append(f"  - Ele gecen veri: {data_classes}\n")
+
+    ref = search_cyber_wiki("credential stuffing breach")
+    if "sonuc bulunamadi" not in ref:
+        out.append(f"### Wiki Referansi\n{ref.split(chr(10))[0]}")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def fetch_security_news(max_items: int = 10) -> str:
+    """
+    The Hacker News ve BleepingComputer RSS feed'lerinden guncel siber guvenlik haberlerini ceker ve docs/wiki/news/ altina kaydeder.
+
+    Args:
+        max_items: Her kaynaktan alinacak maksimum haber sayisi (varsayilan: 10)
+    """
+    feeds = [
+        ("The Hacker News", "https://feeds.feedburner.com/TheHackersNews"),
+        ("BleepingComputer", "https://www.bleepingcomputer.com/feed/"),
+    ]
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    news_dir = os.path.join(WIKI_DIR, "news")
+    os.makedirs(news_dir, exist_ok=True)
+
+    out = ["## Guvenlik Haberleri\n"]
+    total_saved = 0
+
+    for source_name, feed_url in feeds:
+        out.append(f"### {source_name}")
+        req = urllib.request.Request(feed_url, headers={"User-Agent": "SiberSelma/1.0"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            feed_content = resp.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            out.append(f"Feed alinamadi: {e}\n")
+            continue
+
+        # Basit XML parse (feedparser olmadan)
+        items = re.findall(r'<item>(.*?)</item>', feed_content, re.DOTALL)
+        saved_count = 0
+
+        for item in items[:max_items]:
+            title_m = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item, re.DOTALL)
+            link_m = re.search(r'<link>(.*?)</link>', item, re.DOTALL)
+            desc_m = re.search(r'<description>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</description>', item, re.DOTALL)
+            date_m = re.search(r'<pubDate>(.*?)</pubDate>', item)
+
+            if not title_m:
+                continue
+
+            title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
+            link = link_m.group(1).strip() if link_m else ""
+            desc = re.sub(r'<[^>]+>', '', desc_m.group(1)).strip()[:500] if desc_m else ""
+            pub_date = date_m.group(1).strip() if date_m else ""
+
+            out.append(f"- **{title}** ({pub_date[:16]})")
+
+            # Dosya adi olustur
+            safe_title = re.sub(r'[^\w\s-]', '', title)[:60].strip().replace(' ', '_')
+            date_prefix = datetime.now().strftime("%Y-%m-%d")
+            fname = f"{date_prefix}_{safe_title}.md"
+            fpath = os.path.join(news_dir, fname)
+
+            if not os.path.exists(fpath):
+                md_content = f"# {title}\n\n**Kaynak:** {source_name}  \n**Tarih:** {pub_date}  \n**URL:** {link}\n\n## Ozet\n\n{desc}\n"
+                try:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(md_content)
+                    saved_count += 1
+                    total_saved += 1
+                except OSError:
+                    pass
+
+        out.append(f"  ({saved_count} yeni haber kaydedildi)\n")
+
+    out.append(f"\n**Toplam {total_saved} yeni haber `docs/wiki/news/` altina kaydedildi.**")
+    if total_saved > 0:
+        out.append("Haberleri aranabilir yapmak icin `python ingest.py` calistirin.")
+
+    return "\n".join(out)
+
 
 if __name__ == "__main__":
     ensure_wiki_dir()
     print("SiberSelma MCP Sunucusu baslatiliyor...")
     print("Standart I/O uzerinden iletisim dinleniyor (Claude Code vb. icin hazir)")
-    # MCP sunucusunu standart I/O üzerinden çalıştır. (SSE veya stdio desteği vardır, default stdio)
     mcp.run()
