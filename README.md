@@ -129,6 +129,119 @@ perform requests on their behalf...
 
 ---
 
+## 📊 Nasıl Çalışıyor?
+
+### Genel Mimari
+
+```mermaid
+graph LR
+    A["📁 docs/wiki/<br/>(736 .md dosya)"] -->|ingest.py| B["📊 wiki.db<br/>(SQLite FTS5)"]
+    B -->|server.py| C["🔌 MCP Server"]
+    C -->|MCP Protocol| D["🤖 Claude Desktop"]
+```
+
+SiberSelma üç aşamada çalışır:
+1. **İndeksleme** (`ingest.py`): Wiki dosyaları SQLite FTS5 ile indekslenir
+2. **Sunucu** (`server.py`): MCP protokolü üzerinden tool'ları sunar
+3. **İstemci** (Claude Desktop): Claude bu tool'ları sorgulanırken çağırır
+
+---
+
+### Tool Workflow'ları
+
+#### 1️⃣ Arama Workflow (search_cyber_wiki)
+
+```mermaid
+graph LR
+    A["👤 Sorgu<br/>'XSS'"] -->|MCP Tool Call| B["search_cyber_wiki()"]
+    B -->|Tokenize<br/>AND Logic| C["['XSS']"]
+    C -->|SQL MATCH| D["SQLite FTS5<br/>Virtual Table"]
+    D -->|snippet()| E["5 Best Match"]
+    E -->|JSON| F["Claude Response"]
+```
+
+**Adımlar:**
+- Kullanıcı soru sorar: *"@SiberSelma search_cyber_wiki 'XSS'"*
+- Query tokenize edilir: `"XSS"` → `['XSS']`
+- SQLite FTS5 MATCH operatörü indeksen arama yapar
+- İlk 5 en uygun dosya snippet'i ile döndürülür
+- Claude yanıtını bu bilgiyle oluşturur
+
+---
+
+#### 2️⃣ Çözüm Planı Workflow (get_remediation_plan)
+
+```mermaid
+graph LR
+    A["👤 Zafiyet<br/>'IDOR'"] -->|get_remediation_plan()| B["search_cyber_wiki<br/>Wrapper"]
+    B -->|'IDOR çözüm'| C["Wiki Sorgu"]
+    C -->|Filtrele| D["Remediation<br/>Results"]
+    D -->|JSON| E["Claude Response"]
+```
+
+**Adımlar:**
+- `get_remediation_plan("IDOR")` çağrılır
+- Arka planda `search_cyber_wiki("IDOR çözüm")` tetiklenir
+- Wiki'den zafiyet çözüm planları getirilir
+- Claude bunu çözüm önerileriyle sunabilir
+
+---
+
+#### 3️⃣ İndeksleme Workflow (ingest.py)
+
+```mermaid
+graph LR
+    A["📂 docs/wiki/"] -->|Glob *.md| B["736 Dosya"]
+    B -->|Read| C["Content"]
+    C -->|Parse| D["Text + Metadata"]
+    D -->|SQLite INSERT| E["wiki.db"]
+    E -->|FTS5 Index| F["Indexed & Ready"]
+```
+
+**Adımlar:**
+- `python ingest.py` çalıştırılır
+- `docs/wiki/` içindeki tüm `.md` dosyaları bulunur
+- Her dosya okunur ve metin çıkarılır
+- SQLite'a `INSERT` edilir
+- FTS5 otomatik olarak tokenize ve indeksler
+- Arama hazır hale gelir
+
+---
+
+#### 4️⃣ Gelecek: Güvenlik Raporu Orchestrasyon
+
+```mermaid
+graph LR
+    A["search_cyber_wiki"] --> B["Core Knowledge<br/>Engine"]
+    C["analyze_project_vulnerabilities"] --> B
+    D["check_security_headers"] --> B
+    E["find_exposed_secrets"] --> B
+    B --> F["generate_security_report<br/>(Orchestrator)"]
+    F -->|Combined| G["security_report.md"]
+```
+
+Tüm tool'lar tek raporda birleştirilecek:
+- Kod zafiyetleri (SAST)
+- HTTP header kontrolleri
+- Sırlar/credential'lar
+- Wiki referansları
+- Bir `security_report_YYYY-MM-DD.md` üretilecek
+
+---
+
+### FTS5 Arama Mekanizması
+
+SQLite FTS5 (Full-Text Search 5) tam metin araması yapar:
+
+| Kavram | Açıklama |
+|--------|----------|
+| **Tokenize** | "SQL Injection" → `["SQL", "Injection"]` |
+| **MATCH** | `wiki_search MATCH "SQL AND Injection"` |
+| **Rank** | En uygun sonuç ilk sırada |
+| **Snippet** | Sonuç metni etrafındaki 64 karakterlik kontekst |
+
+---
+
 ## Wiki Kaynakları
 
 `docs/wiki/` içinde şu kaynaklar indekslenmiştir:
