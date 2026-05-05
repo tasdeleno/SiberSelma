@@ -2,8 +2,9 @@ import sqlite3
 import os
 import glob
 
-DB_PATH = 'wiki.db'
-WIKI_DIR = os.path.join('docs', 'wiki')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'wiki.db')
+WIKI_DIR = os.path.join(BASE_DIR, 'docs', 'wiki')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -21,26 +22,30 @@ def init_db():
 def ingest_all():
     conn = init_db()
     c = conn.cursor()
-    
-    print("Mevcut indeksler temizleniyor...")
-    c.execute('DELETE FROM wiki_search')
-    
+
     print(f"'{WIKI_DIR}' içerisindeki dosyalar taranıyor ve indeksleniyor...")
     count = 0
-    
-    # Tüm markdown dosyalarını özyinelemeli (recursive) olarak bul
-    for filepath in glob.glob(f"{WIKI_DIR}/**/*.md", recursive=True):
-        try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                # Dosya yolu ve içeriği veritabanına ekle
-                c.execute('INSERT INTO wiki_search (filepath, content) VALUES (?, ?)', (filepath, content))
-                count += 1
-        except Exception as e:
-            print(f"Hata: {filepath} dosyası atlandı. ({e})")
-            
-    conn.commit()
-    conn.close()
+
+    try:
+        c.execute('BEGIN')
+        c.execute('DELETE FROM wiki_search')
+
+        for filepath in glob.glob(f"{WIKI_DIR}/**/*.md", recursive=True):
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    c.execute('INSERT INTO wiki_search (filepath, content) VALUES (?, ?)', (filepath, content))
+                    count += 1
+            except Exception as e:
+                print(f"Hata: {filepath} dosyası atlandı. ({e})")
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
     print(f"\nBasariyla {count} adet markdown (.md) dosyasi SQLite FTS5 ile indekslendi!")
     print(f"Artık SiberSelma sunucusu (server.py) milisaniyeler içerisinde cevap verebilir.")
 

@@ -1,12 +1,16 @@
 import os
+import re
 import glob
+import sqlite3
 from mcp.server.fastmcp import FastMCP
 
 # SiberSelma MCP Sunucusunu Başlatıyoruz
 mcp = FastMCP("SiberSelma")
 
-# Obsidian Wiki klasörü
-WIKI_DIR = os.path.join("docs", "wiki")
+# Script dizinine göre mutlak yollar
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WIKI_DIR = os.path.join(BASE_DIR, "docs", "wiki")
+DB_PATH = os.path.join(BASE_DIR, "wiki.db")
 
 def ensure_wiki_dir():
     """Wiki klasörünün var olduğundan emin olur."""
@@ -16,48 +20,42 @@ def ensure_wiki_dir():
         with open(os.path.join(WIKI_DIR, "xss_ornek.md"), "w", encoding="utf-8") as f:
             f.write("# Cross-Site Scripting (XSS)\n\nXSS zafiyeti, kullanıcı girdilerinin filtrelenmeden ekrana basılmasıyla oluşur.\n\n## Çözüm\nGirdileri sanitize edin.")
 
-import sqlite3
-
-DB_PATH = "wiki.db"
-
 @mcp.tool()
 def search_cyber_wiki(query: str) -> str:
     """
     Obsidian (LLM Wiki) içerisindeki siber güvenlik notlarını tarar.
-    
+
     Args:
         query: Aranacak siber güvenlik terimi veya zafiyet adı (örn: "XSS", "SQL Injection", "nmap")
     """
     if not os.path.exists(DB_PATH):
         return "Hata: Veritabanı bulunamadı. Lütfen önce 'python ingest.py' çalıştırarak dosyaları indeksleyin."
-        
+
+    tokens = re.findall(r'\w+', query)
+    if not tokens:
+        return f"'{query}' için geçerli arama terimi bulunamadı."
+    safe_query = " AND ".join(f'"{t}"' for t in tokens)
+
     try:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        
-        # Çift tırnak ile kaçış (escape) yapıyoruz ki SQLite sorguyu tam bir metin olarak algılasın
-        safe_query = f'"{query}"' 
-        
-        # FTS5 Match ve Snippet kullanımı: Eşleşen kelimenin etrafını kırpar ve 64 kelimelik bağlam getirir
-        c.execute('''
-            SELECT filepath, snippet(wiki_search, 1, '>>', '<<', '...', 64) 
-            FROM wiki_search 
-            WHERE wiki_search MATCH ? 
-            ORDER BY rank 
-            LIMIT 5
-        ''', (safe_query,))
-        
-        rows = c.fetchall()
-        conn.close()
-        
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT filepath, snippet(wiki_search, 1, '>>', '<<', '...', 64)
+                FROM wiki_search
+                WHERE wiki_search MATCH ?
+                ORDER BY rank
+                LIMIT 5
+            ''', (safe_query,))
+            rows = c.fetchall()
+
         if not rows:
             return f"'{query}' için wiki'de sonuç bulunamadı."
-            
+
         results = []
         for row in rows:
             filepath, snippet_text = row
             results.append(f"=== Kaynak: {os.path.basename(filepath)} ===\n{snippet_text}\n")
-            
+
         return "\n".join(results)
     except Exception as e:
         return f"Arama sırasında hata oluştu: {str(e)}"
