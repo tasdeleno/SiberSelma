@@ -1,6 +1,6 @@
 # SiberSelma 🕵️‍♀️
 
-SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur. 736'dan fazla siber güvenlik dokümanını indeksleyerek asistanın sorularınızı wiki tabanlı bir bilgi bankasıyla yanıtlamasını sağlar.
+SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur. 737'den fazla siber güvenlik dokümanını indeksleyerek asistanın sorularınızı wiki tabanlı bir bilgi bankasıyla yanıtlamasını sağlar.
 
 ---
 
@@ -8,7 +8,7 @@ SiberSelma, Claude ve diğer yapay zeka asistanlarına siber güvenlik bilgisi k
 
 | Tool | Açıklama | Durum |
 |------|----------|-------|
-| `search_cyber_wiki` | 736 wiki dosyasında tam metin arama | ✅ Aktif |
+| `search_cyber_wiki` | 737 wiki dosyasında tam metin arama | ✅ Aktif |
 | `get_remediation_plan` | Zafiyet için wiki'den çözüm planı getirir | ✅ Aktif |
 | `analyze_project_vulnerabilities` | Proje kodlarını statik analiz eder (SAST) | 🔜 Yakında |
 | `run_basic_pentest` | Hedef URL/IP üzerinde pentest taraması | 🔜 Yakında |
@@ -65,8 +65,15 @@ python ingest.py
 
 Başarılı çıktı:
 ```
-'docs\wiki' içerisindeki dosyalar taranıyor ve indeksleniyor...
-Başarıyla 736 adet markdown (.md) dosyası SQLite FTS5 ile indekslendi!
+'docs\wiki' içerisindeki dosyalar taranıyor...
+
+[SUMMARY] Indexing Complete:
+  [+] 737 yeni dosya eklendi
+  [~] 0 dosya guncellendi
+  [-] 0 dosya silindi
+  [*] Toplam: 737 dosya
+
+[OK] SiberSelma sunucusu (server.py) hazir.
 ```
 
 ---
@@ -135,7 +142,7 @@ perform requests on their behalf...
 
 ```mermaid
 graph LR
-    A["📁 docs/wiki/<br/>(736 .md dosya)"] -->|ingest.py| B["📊 wiki.db<br/>(SQLite FTS5)"]
+    A["📁 docs/wiki/<br/>(737 .md dosya)"] -->|ingest.py| B["📊 wiki.db<br/>(SQLite FTS5)"]
     B -->|server.py| C["🔌 MCP Server"]
     C -->|MCP Protocol| D["🤖 Claude Desktop"]
 ```
@@ -191,20 +198,18 @@ graph LR
 
 ```mermaid
 graph LR
-    A["📂 docs/wiki/"] -->|Glob *.md| B["736 Dosya"]
-    B -->|Read| C["Content"]
-    C -->|Parse| D["Text + Metadata"]
-    D -->|SQLite INSERT| E["wiki.db"]
-    E -->|FTS5 Index| F["Indexed & Ready"]
+    A["📂 docs/wiki/"] -->|Glob *.md| B["737 Dosya"]
+    B -->|Dedup| C["Yeni / Güncel / Silinen"]
+    C -->|DELETE+INSERT| D["wiki.db"]
+    D -->|FTS5 Index| E["Indexed & Ready"]
 ```
 
 **Adımlar:**
 - `python ingest.py` çalıştırılır
 - `docs/wiki/` içindeki tüm `.md` dosyaları bulunur
-- Her dosya okunur ve metin çıkarılır
-- SQLite'a `INSERT` edilir
+- Veritabanındaki mevcut kayıtlarla karşılaştırılır (deduplikasyon)
+- Yeni dosyalar eklenir, mevcut dosyalar güncellenir, silinmiş dosyalar kaldırılır
 - FTS5 otomatik olarak tokenize ve indeksler
-- Arama hazır hale gelir
 
 ---
 
@@ -236,7 +241,7 @@ SQLite FTS5 (Full-Text Search 5) tam metin araması yapar:
 | Kavram | Açıklama |
 |--------|----------|
 | **Tokenize** | "SQL Injection" → `["SQL", "Injection"]` |
-| **MATCH** | `wiki_search MATCH "SQL AND Injection"` |
+| **MATCH** | `wiki_search MATCH '"SQL" AND "Injection"'` |
 | **Rank** | En uygun sonuç ilk sırada |
 | **Snippet** | Sonuç metni etrafındaki 64 karakterlik kontekst |
 
@@ -265,7 +270,7 @@ SiberSelma/
 ├── CLAUDE.md        # Proje durumu ve yapılacaklar (AI session rehberi)
 ├── requirements.txt
 └── docs/
-    └── wiki/        # 736+ siber güvenlik markdown dosyası
+    └── wiki/        # 737+ siber güvenlik markdown dosyası
         ├── PayloadsAllTheThings/
         ├── h4cker-master/
         ├── cheatsheets/
