@@ -142,9 +142,9 @@ perform requests on their behalf...
 
 ```mermaid
 graph LR
-    A["📁 docs/wiki/<br/>(737 .md dosya)"] -->|ingest.py| B["📊 wiki.db<br/>(SQLite FTS5)"]
-    B -->|server.py| C["🔌 MCP Server"]
-    C -->|MCP Protocol| D["🤖 Claude Desktop"]
+    A["docs/wiki/\n(737 .md dosya)"] -->|ingest.py| B["wiki.db\n(SQLite FTS5)"]
+    B -->|server.py| C["MCP Server"]
+    C -->|MCP Protocol| D["Claude Desktop"]
 ```
 
 SiberSelma üç aşamada çalışır:
@@ -160,10 +160,10 @@ SiberSelma üç aşamada çalışır:
 
 ```mermaid
 graph LR
-    A["👤 Sorgu<br/>'XSS'"] -->|MCP Tool Call| B["search_cyber_wiki()"]
-    B -->|Tokenize<br/>AND Logic| C["['XSS']"]
-    C -->|SQL MATCH| D["SQLite FTS5<br/>Virtual Table"]
-    D -->|snippet()| E["5 Best Match"]
+    A["Sorgu: XSS"] -->|MCP Tool Call| B["search_cyber_wiki()"]
+    B -->|Tokenize + AND| C["tokens"]
+    C -->|SQL MATCH| D["SQLite FTS5"]
+    D -->|snippet| E["5 Best Match"]
     E -->|JSON| F["Claude Response"]
 ```
 
@@ -180,9 +180,9 @@ graph LR
 
 ```mermaid
 graph LR
-    A["👤 Zafiyet<br/>'IDOR'"] -->|get_remediation_plan()| B["search_cyber_wiki<br/>Wrapper"]
-    B -->|'IDOR çözüm'| C["Wiki Sorgu"]
-    C -->|Filtrele| D["Remediation<br/>Results"]
+    A["Zafiyet: IDOR"] -->|get_remediation_plan| B["search_cyber_wiki wrapper"]
+    B -->|IDOR cozum| C["Wiki Sorgu"]
+    C -->|Filtrele| D["Remediation Results"]
     D -->|JSON| E["Claude Response"]
 ```
 
@@ -198,10 +198,10 @@ graph LR
 
 ```mermaid
 graph LR
-    A["📂 docs/wiki/"] -->|Glob *.md| B["737 Dosya"]
-    B -->|Dedup| C["Yeni / Güncel / Silinen"]
+    A["docs/wiki/"] -->|Glob *.md| B["737 Dosya"]
+    B -->|Dedup| C["Yeni - Guncel - Silinen"]
     C -->|DELETE+INSERT| D["wiki.db"]
-    D -->|FTS5 Index| E["Indexed & Ready"]
+    D -->|FTS5 Index| E["Indexed and Ready"]
 ```
 
 **Adımlar:**
@@ -217,11 +217,11 @@ graph LR
 
 ```mermaid
 graph LR
-    A["search_cyber_wiki"] --> B["Core Knowledge<br/>Engine"]
+    A["search_cyber_wiki"] --> B["Core Knowledge Engine"]
     C["analyze_project_vulnerabilities"] --> B
     D["check_security_headers"] --> B
     E["find_exposed_secrets"] --> B
-    B --> F["generate_security_report<br/>(Orchestrator)"]
+    B --> F["generate_security_report\n(Orchestrator)"]
     F -->|Combined| G["security_report.md"]
 ```
 
