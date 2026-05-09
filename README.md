@@ -3,10 +3,12 @@
 **SiberSelma**, Claude / Gemini gibi yapay zeka asistanlarına siber güvenlik bilgisi ve yetenekleri kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur.
 
 İki şey sağlar:
-1. **Bilgi tabanı** — 737+ siber güvenlik dokümanını SQLite FTS5 ile indeksler ve aramaya açar.
-2. **Aktif güvenlik tool'ları** — SAST tarama, pentest, secret tespiti, CVE kontrolü, tehdit istihbaratı ve daha fazlası.
+1. **Bilgi tabanı** — 782+ siber güvenlik dokümanını SQLite FTS5 ile indeksler ve aramaya açar.
+2. **17 aktif güvenlik tool'u** — SAST, pentest, secret tespiti, CVE/CPE taraması, tehdit istihbaratı, MITRE ATT&CK, OWASP ZAP & nuclei wrapper'ları, batch saldırı yüzeyi taraması ve daha fazlası.
 
-> Her tool MCP üzerinden Claude/Gemini'ye, **HTTP API** olarak Antigravity vb. araçlara, **CLI** olarak da terminale açıktır.
+> Her tool dört şekilde kullanılabilir: **MCP** (Claude/Gemini) · **CLI** (terminal) · **HTTP API** (Antigravity, n8n) · **Web UI** (tarayıcı).
+
+[![CI](https://github.com/tasdeleno/SiberSelma/actions/workflows/ci.yml/badge.svg)](https://github.com/tasdeleno/SiberSelma/actions/workflows/ci.yml)
 
 ---
 
@@ -17,6 +19,7 @@
 - [Çalıştırma Modları](#çalıştırma-modları)
 - [Konfigürasyon (Env)](#konfigürasyon-env)
 - [Kurulum (Detaylı)](#kurulum-detaylı)
+- [Docker](#docker)
 - [Sık Karşılaşılan Sorunlar](#sık-karşılaşılan-sorunlar)
 - [Proje Yapısı](#proje-yapısı)
 - [Test & Geliştirme](#test--geliştirme)
@@ -29,29 +32,44 @@
 git clone https://github.com/tasdeleno/SiberSelma.git
 cd SiberSelma
 pip install -r requirements.txt
-python ingest.py            # 737 wiki dosyasını indeksle
+python ingest.py            # 782 wiki dosyasını indeksle (ilk seferde)
 python server.py            # MCP sunucusu (stdio)
 ```
 
-Bir tool'u doğrudan terminalden test et:
+CLI ile herhangi bir tool'u doğrudan çağır:
 ```bash
 python server.py --tool wiki --query="XSS"
 python server.py --tool headers --url=https://example.com
 python server.py --tool subdomains --domain=example.com
+python server.py --tool batch --domain=example.com         # subdomain → header pipe
+python server.py --tool report --url=https://x.com --directory=./project
+```
+
+Tarayıcıdan kullanmak için:
+```bash
+python web_ui.py            # http://localhost:8766
+```
+
+HTTP API olarak (Antigravity / n8n / curl):
+```bash
+python api_server.py        # http://localhost:8765
+curl "http://localhost:8765/headers?url=https://example.com"
 ```
 
 ---
 
 ## Tool'lar
 
-### 🔍 Bilgi Tabanı
+**17 tool / 5 kategori.** Hepsi MCP, CLI, HTTP API ve Web UI üzerinden çağrılabilir.
+
+### 🔍 Bilgi Tabanı (2)
 
 | Tool | Açıklama |
 |------|----------|
-| `search_cyber_wiki(query)` | 737 wiki dosyasında FTS5 araması (AND → OR fallback) |
+| `search_cyber_wiki(query)` | 782 wiki dosyasında FTS5 araması (AND → OR fallback) |
 | `get_remediation_plan(vuln)` | Zafiyet için wiki'den çözüm planı |
 
-### 🛡️ Statik & Dinamik Analiz
+### 🛡️ Statik & Dinamik Analiz (5)
 
 | Tool | Açıklama |
 |------|----------|
@@ -59,20 +77,28 @@ python server.py --tool subdomains --domain=example.com
 | `find_exposed_secrets(dir)` | 12 secret pattern + Shannon entropy filtresi + `.env` git kontrolü |
 | `run_basic_pentest(url)` | HTTP header, cookie (HttpOnly/SameSite/Secure), form, sunucu bilgi sızıntısı |
 | `check_security_headers(url)` | 10 güvenlik header'ı kontrolü + skor |
-| `check_dependencies(file)` | NVD API ile **CPE-based** CVE taraması (paket sürümünden tam eşleşme) |
+| `check_dependencies(file)` | NVD API ile **CPE-based** CVE taraması (paket sürümünden tam eşleşme), 24h cache |
 
-### 🌐 Harici Tehdit İstihbaratı
+### 🎯 Saldırı Yüzeyi & Aktif Tarama (3)
+
+| Tool | Açıklama |
+|------|----------|
+| `batch_scan_attack_surface(domain)` | Subdomain keşfi → her birine güvenlik header taraması, zayıf hedefleri öne çıkarır |
+| `run_nuclei_scan(target)` | Lokal `nuclei` çalıştırır (yüklü olmalı), JSONL parse + severity gruplaması |
+| `run_zap_baseline(target)` | OWASP ZAP daemon API ile passive baseline tarama |
+
+### 🌐 Harici Tehdit İstihbaratı (6)
 
 | Tool | Kaynak | Notlar |
 |------|--------|--------|
-| `find_subdomains(domain)` | crt.sh SSL logları | Key gerektirmez |
-| `check_history(url)` | Wayback Machine | Hassas yol arama |
-| `check_threat(target)` | AlienVault OTX | Key opsiyonel — `ALIENVAULT_OTX_KEY` |
-| `get_attack_techniques(vuln)` | MITRE ATT&CK | 24h lokal cache |
-| `check_breach(email)` | Have I Been Pwned | `HIBP_API_KEY` zorunlu |
+| `find_subdomains(domain)` | crt.sh SSL logları | 24h cache; key gerektirmez |
+| `check_history(url)` | Wayback Machine | Hassas yol arama; 24h cache |
+| `check_threat(target)` | AlienVault OTX | 24h cache; key opsiyonel — `ALIENVAULT_OTX_KEY` |
+| `get_attack_techniques(vuln)` | MITRE ATT&CK | Filesystem 24h cache |
+| `check_breach(email)` | Have I Been Pwned | `HIBP_API_KEY` zorunlu, `Retry-After` aware |
 | `fetch_security_news(n)` | THN + BleepingComputer | `feedparser`; `docs/wiki/news/` altına yazar |
 
-### 📋 Orkestrasyon
+### 📋 Orkestrasyon (1)
 
 | Tool | Açıklama |
 |------|----------|
@@ -80,11 +106,16 @@ python server.py --tool subdomains --domain=example.com
 
 > `output_format="json"` parametresi ile yapılandırılmış JSON rapor da üretebilir.
 
+### ⚙️ Otomatik Görevler
+
+- **Otomatik CVE → wiki** (`SIBERSELMA_AUTO_CVE_SCAN=1`): Server başlangıcında arkaplan thread'inde `requirements.txt` NVD'ye sorulur, ilk kez görülen CVE'ler `docs/wiki/cve/CVE-XXXX-YYYYY.md` olarak yazılır.
+- **HTTP cache layer** (`.cache/http_cache.db`): 24h TTL ile NVD, OTX, crt.sh, Wayback yanıtlarını cacheler — rate-limit ve gecikme problemi büyük ölçüde çözülür.
+
 ---
 
 ## Çalıştırma Modları
 
-SiberSelma üç farklı modda çalışır.
+SiberSelma dört farklı modda çalışır.
 
 ### 1. MCP Server (Claude/Gemini için)
 
@@ -128,6 +159,14 @@ python api_server.py
 
 > **Güvenlik:** Yerel dosya sistemi taraması yapan endpoint'ler (`/sast`, `/secrets`, `/deps`, `/report`) yalnızca `SIBERSELMA_ALLOWED_PATHS` env'inde tanımlı kökler altında çalışır. Default: proje kökü. `SIBERSELMA_API_TOKEN` tanımlıysa Bearer auth zorunlu olur.
 
+### 4. Web UI (Tarayıcı)
+
+```bash
+python web_ui.py            # http://localhost:8766
+```
+
+Standart kütüphaneyle yazılmış minimalist arayüz, **17 tool'un tamamını** form üzerinden çağırır. Tool seçimi için üstte chip'ler, sonuç koyu tema bir `<pre>` içinde gösterilir. Ek bağımlılık yok (`feedparser` haricinde).
+
 ---
 
 ## Konfigürasyon (Env)
@@ -141,7 +180,43 @@ Tüm tool'lar opsiyonel ortam değişkenleriyle yapılandırılabilir:
 | `NVD_API_KEY` | NVD CVE API key (rate limit'i 5→50 req/30s yapar) | yok |
 | `SIBERSELMA_INSECURE_TLS` | `1` ise TLS doğrulamasını kapatır (self-signed pentest hedefleri için) | `0` (TLS açık) |
 | `SIBERSELMA_ALLOWED_PATHS` | API server için izinli kök dizinler (`;` ile ayrılır) | proje kökü |
+| `SIBERSELMA_AUTO_CVE_SCAN` | `1` ise server başlangıcında otomatik CVE taraması başlatır (arkaplan thread) | `0` |
+| `ZAP_API_KEY` | OWASP ZAP daemon API key (opsiyonel) | yok |
 | `SIBERSELMA_API_TOKEN` | API server Bearer auth token | yok (auth devre dışı) |
+
+---
+
+## Docker
+
+Multi-stage build (build aşaması: `python:3.12-slim`; final image: `gcr.io/distroless/python3-debian12:nonroot`). Wiki indeksi build sırasında oluşturulur, image hazır gelir.
+
+```bash
+# Image'ı build et
+docker build -t siberselma .
+
+# 1. MCP server (stdio) — başka bir container'dan veya socket'tan kullan
+docker run --rm -i siberselma
+
+# 2. HTTP API
+docker run --rm -p 8765:8765 \
+  -e SIBERSELMA_API_TOKEN=secret123 \
+  siberselma python api_server.py
+
+# 3. Web UI
+docker run --rm -p 8766:8766 siberselma python web_ui.py
+
+# 4. Tek seferlik CLI komutu
+docker run --rm siberselma python server.py --tool wiki --query="XSS"
+```
+
+API key'leri çevre değişkeni olarak geç:
+```bash
+docker run --rm -p 8765:8765 \
+  -e HIBP_API_KEY=... \
+  -e NVD_API_KEY=... \
+  -e ALIENVAULT_OTX_KEY=... \
+  siberselma python api_server.py
+```
 
 ---
 
@@ -299,23 +374,33 @@ SIBERSELMA_INSECURE_TLS=1 python server.py --tool pentest --target=https://test.
 
 ```
 SiberSelma/
-├── server.py               # MCP server + CLI (FastMCP)
+├── server.py               # MCP server + CLI (FastMCP), 17 tool
 ├── api_server.py           # HTTP API wrapper (Bearer auth + path whitelist)
-├── ingest.py               # Wiki → SQLite FTS5 indeksleyici
+├── web_ui.py               # Tarayıcı arayüzü (standart kütüphane)
+├── ingest.py               # Wiki → SQLite FTS5 indeksleyici (deduplikasyon)
 ├── wiki.db                 # FTS5 veritabanı (gitignored)
-├── requirements.txt
+├── requirements.txt        # mcp, httpx, pytest, feedparser
 ├── setup.ps1               # Windows otomatik kurulum
+├── Dockerfile              # multi-stage, distroless nonroot
+├── .dockerignore
+├── .github/
+│   └── workflows/ci.yml    # GitHub Actions: pytest matrix (3.11 + 3.12)
 ├── tests/
-│   └── test_patterns.py    # SAST + secret regex testleri
+│   └── test_patterns.py    # SAST + secret regex testleri (19 test)
 ├── docs/
-│   └── wiki/               # 737+ siber güvenlik markdown
+│   └── wiki/               # 782+ siber güvenlik markdown
 │       ├── PayloadsAllTheThings/
 │       ├── OWASP-CheatSheets/
+│       ├── OWASP_API_Top10_2023.md
+│       ├── Secure_Coding_Practices.md
+│       ├── Cloud_Security_AWS_GCP_Azure.md
+│       ├── Docker_Container_Security.md
+│       ├── cve/            # auto_cve_scan_to_wiki çıktıları
 │       ├── news/           # fetch_security_news çıktıları
 │       └── ...
-├── .cache/                 # MITRE ATT&CK cache (gitignored)
+├── .cache/                 # MITRE ATT&CK + http_cache.db (gitignored)
 ├── CLAUDE.md               # AI session rehberi
-├── CHANGELOG.md            # Sürüm notları
+├── CHANGELOG.md            # Sürüm notları (Keep a Changelog)
 ├── rapor.md                # Açık bug/eksik checklist'i
 └── wiki_schema.md          # Wiki yazım kuralları
 ```
@@ -325,7 +410,7 @@ SiberSelma/
 ## Test & Geliştirme
 
 ```bash
-# Pattern testleri (19 test)
+# Pattern testleri (19 test, ~1 sn)
 python -m pytest tests/ -q
 
 # CLI ile her tool denemek
@@ -334,7 +419,13 @@ python server.py --tool <name> --<arg>=<value>
 # HTTP API ile denemek
 python api_server.py
 curl "http://localhost:8765/wiki?q=XSS"
+
+# Web UI ile denemek
+python web_ui.py
+open http://localhost:8766
 ```
+
+CI **GitHub Actions** üzerinde Python 3.11 + 3.12 matrix'inde otomatik koşar (`.github/workflows/ci.yml`): pytest, syntax-check, ingest smoke test, CLI smoke test.
 
 Açık iş kalemleri için [`rapor.md`](./rapor.md) ve sürüm notları için [`CHANGELOG.md`](./CHANGELOG.md).
 
