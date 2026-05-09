@@ -84,6 +84,38 @@ Yeni bir wiki dosyası oluştururken `wiki_schema.md` kurallarını uygula:
 
 ---
 
+## Gemini CLI Bağlantı Kurulumu
+
+`~/.gemini/settings.json` (Windows: `%USERPROFILE%\.gemini\settings.json`) dosyasına ekle:
+
+**Windows:**
+```json
+{
+  "mcpServers": {
+    "SiberSelma": {
+      "command": "C:\\Users\\kullanici\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "args": ["C:\\SiberSelma\\server.py"]
+    }
+  }
+}
+```
+
+**macOS / Linux:**
+```json
+{
+  "mcpServers": {
+    "SiberSelma": {
+      "command": "python3",
+      "args": ["/home/kullanici/SiberSelma/server.py"]
+    }
+  }
+}
+```
+
+> **Önemli (Windows):** Repoyu `Masaüstü` gibi Türkçe karakter içeren dizine klonlama. JSON bu karakterleri bozuk kodlar (`MasaÃ¼stÃ¼`) ve sunucu başlatılamaz. `C:\SiberSelma\` gibi bir yol kullan.
+
+---
+
 ## Kullanım Testi
 
 Server'ı test etmek için:

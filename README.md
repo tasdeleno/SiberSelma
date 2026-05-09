@@ -89,22 +89,45 @@ SiberSelma, MCP (Model Context Protocol) standardını kullanır. MCP destekleye
 
 ---
 
+### Önemli: Kurulum Yolu Seçimi
+
+> **Windows kullanıcıları için kritik not:** Repoyu `Masaüstü` (Desktop) gibi Türkçe karakter içeren bir dizine klonlamayın. JSON config dosyaları bu karakterleri yanlış kodlayarak `MasaÃ¼stÃ¼` gibi bozuk yollara dönüştürebilir — bu durumda MCP sunucu başlatılamaz.
+>
+> **Önerilen kurulum yolu:** `C:\SiberSelma\` veya `C:\Users\kullanici\SiberSelma\`
+
+---
+
 ### Claude Desktop Kurulumu
 
 `%APPDATA%\Claude\claude_desktop_config.json` dosyasını açıp şu satırları ekle:
 
+**Windows:**
 ```json
 {
   "mcpServers": {
     "SiberSelma": {
-      "command": "python",
-      "args": ["C:\\tam\\yol\\SiberSelma\\server.py"]
+      "command": "C:\\Users\\kullanici\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "args": ["C:\\SiberSelma\\server.py"]
     }
   }
 }
 ```
 
-> macOS/Linux için `args` içinde `/tam/yol/SiberSelma/server.py` yaz.
+**macOS / Linux:**
+```json
+{
+  "mcpServers": {
+    "SiberSelma": {
+      "command": "python3",
+      "args": ["/home/kullanici/SiberSelma/server.py"]
+    }
+  }
+}
+```
+
+> `python.exe` yolunu bulmak için terminalde `where python` (Windows) veya `which python3` (macOS/Linux) çalıştır.
+>
+> Zaten başka MCP sunucuların varsa, `mcpServers` içine yalnızca `"SiberSelma": { ... }` bloğunu eklemen yeterli.
 
 Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
 
@@ -114,18 +137,29 @@ Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
 
 `%USERPROFILE%\.gemini\settings.json` (macOS/Linux: `~/.gemini/settings.json`) dosyasını aç veya oluştur:
 
+**Windows:**
 ```json
 {
   "mcpServers": {
     "SiberSelma": {
-      "command": "python",
-      "args": ["C:\\tam\\yol\\SiberSelma\\server.py"]
+      "command": "C:\\Users\\kullanici\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "args": ["C:\\SiberSelma\\server.py"]
     }
   }
 }
 ```
 
-> **Not:** Zaten başka MCP sunucuların varsa, `mcpServers` içine `"SiberSelma": { ... }` bloğunu eklemen yeterli.
+**macOS / Linux:**
+```json
+{
+  "mcpServers": {
+    "SiberSelma": {
+      "command": "python3",
+      "args": ["/home/kullanici/SiberSelma/server.py"]
+    }
+  }
+}
+```
 
 Doğrulama:
 ```bash
@@ -448,6 +482,48 @@ SiberSelma/
         ├── h4cker-master/
         ├── cheatsheets/
         └── ...
+```
+
+---
+
+## Sık Karşılaşılan Sorunlar
+
+### MCP sunucu bağlanamıyor / "No such file or directory"
+
+**Belirti:** Claude Desktop veya Gemini CLI loglarında şu hata görünür:
+```
+can't open file 'C:\Users\...\MasaÃ¼stÃ¼\SiberSelma\server.py': [Errno 2] No such file or directory
+```
+
+**Sebep:** `Masaüstü` gibi Türkçe karakter içeren bir dizinde kurulu olması. JSON config dosyası "ü" karakterini `Ã¼` olarak bozuk kodlar.
+
+**Çözüm:**
+1. Repoyu Türkçe karakter içermeyen bir yola taşı (örn. `C:\SiberSelma\`)
+2. Config dosyasını güncellenmiş yolla tekrar yaz
+3. İstemciyi yeniden başlat
+
+---
+
+### `python` komutu bulunamıyor
+
+Config'de `"command": "python"` yerine Python'un tam yolunu kullan:
+
+```
+# Windows — tam yolu bulmak için:
+where python
+
+# macOS/Linux
+which python3
+```
+
+---
+
+### wiki.db yok / arama sonuç vermiyor
+
+`wiki.db` `.gitignore`'da olduğu için repoda bulunmaz. İlk kurulumda ve wiki güncellemelerinden sonra çalıştır:
+
+```bash
+python ingest.py
 ```
 
 ---
