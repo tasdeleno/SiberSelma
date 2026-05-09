@@ -34,9 +34,6 @@ def ensure_wiki_dir():
     """Wiki klasörünün var olduğundan emin olur."""
     if not os.path.exists(WIKI_DIR):
         os.makedirs(WIKI_DIR)
-        # Örnek bir dosya oluşturalım
-        with open(os.path.join(WIKI_DIR, "xss_ornek.md"), "w", encoding="utf-8") as f:
-            f.write("# Cross-Site Scripting (XSS)\n\nXSS zafiyeti, kullanıcı girdilerinin filtrelenmeden ekrana basılmasıyla oluşur.\n\n## Çözüm\nGirdileri sanitize edin.")
 
 @mcp.tool()
 def search_cyber_wiki(query: str) -> str:
@@ -426,7 +423,13 @@ def find_exposed_secrets(directory: str) -> str:
     findings = []
     scanned = 0
     scan_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rb", ".php", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".conf", ".env", ".sh", ".bat", ".ps1"}
-    skip_dirs = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build", ".tox"}
+    skip_dirs = {
+        "node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build", ".tox",
+        # Wiki/cheatsheet/payload koleksiyonları — örnek payload'lar false-positive üretir
+        "PayloadsAllTheThings", "OWASP-CheatSheets", "cheatsheets",
+        "PentestGPT-main", "RedTeam-Tools-main", "Reverse-Engineering-main",
+        "Awesome-Asset-Discovery-master", "90DaysOfCyberSecurity-main",
+    }
 
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
@@ -503,24 +506,31 @@ def find_exposed_secrets(directory: str) -> str:
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 def _parse_requirements_txt(filepath):
+    """requirements.txt'i (paket, sürüm) çiftleri olarak döndürür. Sürüm yoksa None."""
     packages = []
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("-"):
+            line = line.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
                 continue
-            match = re.match(r'^([A-Za-z0-9_\-\.]+)', line)
-            if match:
-                packages.append(match.group(1))
+            # name==1.2.3, name>=1.2, name~=1.2 vb.
+            m = re.match(r'^([A-Za-z0-9_\-\.]+)\s*(?:==|>=|<=|~=|!=)?\s*([0-9][0-9A-Za-z\.\-+]*)?', line)
+            if m:
+                packages.append((m.group(1), m.group(2)))
     return packages
 
+
 def _parse_package_json(filepath):
+    """package.json'ı (paket, sürüm) çiftleri olarak döndürür."""
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
         data = json.load(f)
     packages = []
     for section in ("dependencies", "devDependencies"):
-        if section in data:
-            packages.extend(data[section].keys())
+        deps = data.get(section, {})
+        for name, ver in deps.items():
+            # ^1.2.3 / ~1.2.3 / 1.2.3 — operator'leri sıyır
+            clean = re.sub(r'^[\^~><=\s]+', '', str(ver)).strip() or None
+            packages.append((name, clean))
     return packages
 
 @mcp.tool()
@@ -560,11 +570,23 @@ def check_dependencies(file_path: str) -> str:
     checked = 0
     errors = 0
 
-    for idx, pkg in enumerate(packages[:20]):
+    for idx, pkg_entry in enumerate(packages[:20]):
+        if isinstance(pkg_entry, tuple):
+            pkg_name, pkg_ver = pkg_entry
+        else:
+            pkg_name, pkg_ver = pkg_entry, None
         if idx > 0:
             time.sleep(sleep_between)
         try:
-            api_url = f"{NVD_API_URL}?keywordSearch={urllib.request.quote(pkg)}&resultsPerPage=5"
+            # CPE-based query (sürüm varsa) — keyword'den çok daha az false-positive üretir
+            if pkg_ver:
+                cpe = f"cpe:2.3:a:*:{pkg_name.lower()}:{pkg_ver}:*:*:*:*:*:*:*"
+                api_url = f"{NVD_API_URL}?cpeName={urllib.request.quote(cpe)}&resultsPerPage=5"
+            else:
+                # Sürüm yok → virtualMatchString ile ürün adına göre dene
+                vms = f"cpe:2.3:a:*:{pkg_name.lower()}:*:*:*:*:*:*:*:*"
+                api_url = f"{NVD_API_URL}?virtualMatchString={urllib.request.quote(vms)}&resultsPerPage=5"
+
             headers = {"User-Agent": "SiberSelma/1.0"}
             if nvd_key:
                 headers["apiKey"] = nvd_key
@@ -574,9 +596,10 @@ def check_dependencies(file_path: str) -> str:
             checked += 1
 
             total = data.get("totalResults", 0)
+            label = f"{pkg_name}=={pkg_ver}" if pkg_ver else pkg_name
             if total > 0:
                 vuln_count += 1
-                out.append(f"\n### {pkg} — {total} CVE bulundu")
+                out.append(f"\n### {label} — {total} CVE bulundu")
                 for vuln in data.get("vulnerabilities", [])[:3]:
                     cve = vuln.get("cve", {})
                     cve_id = cve.get("id", "?")
@@ -606,17 +629,19 @@ def check_dependencies(file_path: str) -> str:
 from datetime import datetime
 
 @mcp.tool()
-def generate_security_report(url: str, directory: str) -> str:
+def generate_security_report(url: str, directory: str, output_format: str = "markdown") -> str:
     """
     Tüm güvenlik tool'larını sırayla çalıştırarak kapsamlı bir güvenlik raporu üretir ve
-    security_report_YYYY-MM-DD.md dosyasına kaydeder.
+    security_report_YYYY-MM-DD.md (veya .json) dosyasına kaydeder.
 
     Args:
         url: Analiz edilecek web sitesi URL'i (örn: "https://example.com")
         directory: Analiz edilecek proje dizininin tam yolu
+        output_format: "markdown" (default) veya "json"
     """
     date_str = datetime.now().strftime("%Y-%m-%d")
-    report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.md")
+    ext = "json" if output_format == "json" else "md"
+    report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.{ext}")
 
     header_lines = []
     sections = []
@@ -730,6 +755,27 @@ def generate_security_report(url: str, directory: str) -> str:
 
     # Özeti başlık ile bölümler arasına yerleştir
     full_report = "\n".join(header_lines + summary_lines + sections)
+
+    if output_format == "json":
+        report_obj = {
+            "date": date_str,
+            "target_url": url,
+            "project_dir": directory,
+            "summary": {"critical": critical, "high": high, "medium": medium},
+            "sections": {
+                "pentest": sections[1] if len(sections) > 1 else "",
+                "sast": sections[3] if len(sections) > 3 else "",
+                "headers": sections[5] if len(sections) > 5 else "",
+                "dependencies": sections[7] if len(sections) > 7 else "",
+                "secrets": sections[9] if len(sections) > 9 else "",
+            },
+        }
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report_obj, f, ensure_ascii=False, indent=2)
+            return json.dumps(report_obj, ensure_ascii=False, indent=2) + f"\n\n---\nRapor kaydedildi: {report_path}"
+        except OSError as e:
+            return json.dumps(report_obj, ensure_ascii=False, indent=2) + f"\n\n---\nUyarı: Rapor dosyaya kaydedilemedi ({e})"
 
     try:
         with open(report_path, "w", encoding="utf-8") as f:
@@ -1127,6 +1173,72 @@ def fetch_security_news(max_items: int = 10) -> str:
     return "\n".join(out)
 
 
+CLI_TOOLS = {
+    "wiki": (search_cyber_wiki, ["query"]),
+    "remediation": (get_remediation_plan, ["vulnerability_name"]),
+    "sast": (analyze_project_vulnerabilities, ["directory_path"]),
+    "pentest": (run_basic_pentest, ["target"]),
+    "headers": (check_security_headers, ["url"]),
+    "secrets": (find_exposed_secrets, ["directory"]),
+    "deps": (check_dependencies, ["file_path"]),
+    "report": (generate_security_report, ["url", "directory"]),
+    "subdomains": (find_subdomains, ["domain"]),
+    "history": (check_history, ["url"]),
+    "threat": (check_threat, ["target"]),
+    "attack": (get_attack_techniques, ["vulnerability"]),
+    "breach": (check_breach, ["email"]),
+    "news": (fetch_security_news, ["max_items"]),
+}
+
+
+def _run_cli(argv):
+    """Basit CLI: python server.py --tool <name> --<arg>=<value>"""
+    args = {}
+    tool_name = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--tool" and i + 1 < len(argv):
+            tool_name = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--"):
+            key, _, val = a[2:].partition("=")
+            if not val and i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                val = argv[i + 1]
+                i += 2
+            else:
+                i += 1
+            args[key] = val
+            continue
+        i += 1
+
+    if not tool_name or tool_name not in CLI_TOOLS:
+        print("Kullanim: python server.py --tool <name> --<arg>=<value>", file=__import__("sys").stderr)
+        print(f"Tool'lar: {', '.join(CLI_TOOLS)}", file=__import__("sys").stderr)
+        return 2
+
+    func, params = CLI_TOOLS[tool_name]
+    call_kwargs = {}
+    for p in params:
+        if p in args:
+            v = args[p]
+            # int dönüşümü gereken yerler
+            if p == "max_items":
+                try:
+                    v = int(v)
+                except ValueError:
+                    pass
+            call_kwargs[p] = v
+        else:
+            print(f"Eksik parametre: --{p}", file=__import__("sys").stderr)
+            return 2
+
+    result = func(**call_kwargs)
+    print(result)
+    return 0
+
+
 if __name__ == "__main__":
     import sys
     import logging
@@ -1136,6 +1248,10 @@ if __name__ == "__main__":
         format="[%(asctime)s] %(levelname)s: %(message)s",
     )
     ensure_wiki_dir()
+
+    if len(sys.argv) > 1 and "--tool" in sys.argv:
+        sys.exit(_run_cli(sys.argv[1:]))
+
     logging.info("SiberSelma MCP Sunucusu baslatiliyor...")
     logging.info("Standart I/O uzerinden iletisim dinleniyor (Claude Code vb. icin hazir)")
     mcp.run()
