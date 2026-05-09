@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check (compile)
+        run: python -m compileall -q server.py api_server.py web_ui.py ingest.py
+
+      - name: Run pytest
+        run: python -m pytest tests/ -v
+
+      - name: Verify ingest.py runs
+        run: |
+          mkdir -p docs/wiki
+          echo "# Test" > docs/wiki/_ci_smoke.md
+          python ingest.py
+          rm docs/wiki/_ci_smoke.md
+
+      - name: Smoke test CLI
+        run: |
+          python ingest.py
+          python server.py --tool wiki --query="test" || true
