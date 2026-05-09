@@ -1,6 +1,6 @@
 # SiberSelma 
 
-<img width="480" height="889" alt="Gemini_Generated_Image_ma4otyma4otyma4o" src="https://github.com/user-attachments/assets/d6b612d0-8ddd-4ed0-a5ca-c6ef89ba7eeb" />
+  <img width="480" height="889" alt="Gemini_Generated_Image_ma4otyma4otyma4o" src="https://github.com/user-attachments/assets/d6b612d0-8ddd-4ed0-a5ca-c6ef89ba7eeb" />
 
 
 
