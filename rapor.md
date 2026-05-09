@@ -15,18 +15,18 @@
 
 ### Orta Öncelik
 - [x] **Tüm SSL doğrulamaları kapalı** — `_ssl_ctx()` merkezi yardımcı + `SIBERSELMA_INSECURE_TLS` env opt-out (2026-05-09)
-- [ ] **NVD `keywordSearch` false-positive** — `server.py:525` CPE-based sorguya geç (`cpeName=cpe:2.3:a:...`).
-- [x] **NVD rate limit handling** — `NVD_API_KEY` env desteği + paketler arası sleep (key'siz 6.5s, key ile 0.7s) (2026-05-09)
+- [x] **NVD `keywordSearch` false-positive** — CPE-based (`cpeName` / `virtualMatchString`) sorguya geçildi, sürüm parse'i eklendi (2026-05-09)
+- [x] **NVD rate limit handling** — `NVD_API_KEY` env desteği + paketler arası sleep (2026-05-09)
 - [x] **MITRE ATT&CK her çağrıda 30+ MB indiriyor** — `.cache/` altında 24h TTL ile cache'lendi (2026-05-09)
-- [x] **`generate_security_report` özet konumu kırılgan** — `header_lines` ayrıldı, özet doğru konuma yerleşti (2026-05-09)
+- [x] **`generate_security_report` özet konumu kırılgan** — `header_lines` ayrıldı (2026-05-09)
 - [x] **`fetch_security_news` regex XML parser** — `feedparser` kullanımına geçildi (2026-05-09)
 
 ### Küçük
-- [x] **`analyze_project_vulnerabilities` venv skip eksik** — split-edilen path segmentlerinde `venv`/`.venv`/`.git`/`dist`/`build` kontrolü (2026-05-09)
+- [x] **`analyze_project_vulnerabilities` venv skip eksik** — segment-based skip (2026-05-09)
 - [x] **Tekrar eden `import re as _re`** — global `re` kullanımına geçildi (2026-05-09)
-- [x] **`requirements.txt` ölü bağımlılıklar** — `markdown`, `python-dotenv` kaldırıldı (2026-05-09)
-- [ ] **`ensure_wiki_dir` örnek dosyası yanıltıcı** — yazıyor ama FTS5'e ingest etmiyor.
-- [ ] **`find_exposed_secrets` wiki örneklerini kapsıyor** — `PayloadsAllTheThings` taraması devasa false-positive üretiyor.
+- [x] **`requirements.txt` ölü bağımlılıklar** — `markdown`, `python-dotenv` çıkarıldı; `feedparser` eklendi (2026-05-09)
+- [x] **`ensure_wiki_dir` örnek dosyası yanıltıcı** — örnek dosya yazma kaldırıldı (2026-05-09)
+- [x] **`find_exposed_secrets` wiki örneklerini kapsıyor** — wiki/payload/cheatsheet klasörleri skip listesine eklendi (2026-05-09)
 
 ---
 
@@ -34,80 +34,87 @@
 
 - [x] **Test klasörü yok** — `tests/test_patterns.py` eklendi, 19 test geçiyor (2026-05-09)
 - [x] **Logging yok** — `__main__` bloğu `logging` modülüne (stderr) geçti (2026-05-09)
-- [ ] **Otomatik CVE → wiki** — `server.py` her başladığında `requirements.txt`'i NVD'ye sorsun, yeni CVE'leri `docs/wiki/cve/CVE-XXXX-XXXXX.md` olarak yazsın.
-- [ ] **Faz 5 wiki kaynakları** — OWASP API Top 10, Secure Coding Practices, CloudSploit, Docker Bench eklenmemiş.
-- [ ] **Hata mesajı dili tutarsız** — bazı modüller Türkçe karakterli, bazıları ASCII'ye düşmüş; standartlaştır.
-- [ ] **Rapor JSON çıktısı yok** — `generate_security_report` sadece markdown üretiyor.
+- [x] **Otomatik CVE → wiki** — `SIBERSELMA_AUTO_CVE_SCAN=1` ile arkaplan thread (2026-05-09)
+- [x] **Faz 5 wiki kaynakları** — OWASP API Top 10, Secure Coding, Cloud (AWS/GCP/Azure), Docker eklendi (2026-05-09)
+- [ ] **Hata mesajı dili tutarsız** — bazı modüller Türkçe karakterli, bazıları ASCII'ye düşmüş; düşük öncelik.
+- [x] **Rapor JSON çıktısı yok** — `generate_security_report(..., output_format="json")` eklendi (2026-05-09)
 - [x] **HIBP `Retry-After` header'ı okunmuyor** — 429'da Retry-After değeri raporlanıyor (2026-05-09)
-- [ ] **GEMINI.md ve setup.ps1 README'de yok** — Gemini CLI kullanımı dökümante edilmemiş.
-- [ ] **Boş `ai/` ve `networking/` klasörleri** — sil ya da amaç yaz.
+- [x] **GEMINI.md ve setup.ps1 README'de yok** — Gemini + setup.ps1 README'ye işlendi (2026-05-09)
+- [x] **Boş `ai/` ve `networking/` klasörleri** — silindi (2026-05-09)
 
 ---
 
 ## 🚀 Geliştirme Önerileri
 
 ### Kalite
-- [x] **Pytest klasörü kur** — `tests/test_patterns.py` ile `DANGEROUS_PATTERNS` ve `SECRET_PATTERNS` regex testleri (2026-05-09)
-- [ ] **SQLite cache layer** — NVD, MITRE, OTX, Wayback yanıtları için 24h TTL. Tablo: `(tool, key, response, fetched_at)`. (Kısmen: MITRE filesystem cache ile çözüldü)
-- [ ] **CPE-based NVD sorgusu** — paket sürümünü `pkg==1.2.3`'ten çıkar.
+- [x] **Pytest klasörü kur** — `tests/test_patterns.py` ile 19 test (2026-05-09)
+- [x] **SQLite cache layer** — `.cache/http_cache.db` 24h TTL; OTX + crt.sh aktif (2026-05-09)
+- [x] **CPE-based NVD sorgusu** — sürüm parse + `cpeName` query (2026-05-09)
 
 ### Güvenlik
-- [x] **TLS doğrulama default açık** + `SIBERSELMA_INSECURE_TLS=1` ile opt-out (2026-05-09)
+- [x] **TLS doğrulama default açık** + `SIBERSELMA_INSECURE_TLS=1` opt-out (2026-05-09)
 - [x] **API server path whitelist** — `SIBERSELMA_ALLOWED_PATHS` env, `SIBERSELMA_API_TOKEN` Bearer auth (2026-05-09)
-- [x] **`find_exposed_secrets`'a Shannon entropy filtresi** — entropy < 2.5 ise atla, private key/DB string'lerde bypass (2026-05-09)
+- [x] **`find_exposed_secrets`'a Shannon entropy filtresi** — entropy < 2.5 ise atla (2026-05-09)
 
 ### Yeni Özellikler
-- [ ] **CLI modu** — `python server.py --tool pentest --url ...` (MCP olmadan).
-- [ ] **Toplu tarama tool'u** — `find_subdomains` çıktısını `check_security_headers`'a pipe eden batch.
-- [ ] **OWASP ZAP / Nuclei entegrasyonu** — `run_basic_pentest`'i gerçek tarayıcıyla besle.
-- [ ] **Web UI** — FastAPI + HTMX ile raporları tarayıcıda göster.
+- [x] **CLI modu** — `python server.py --tool <name> --<arg>=<val>` (2026-05-09)
+- [x] **Toplu tarama tool'u** — `batch_scan_attack_surface(domain)` (2026-05-09)
+- [x] **OWASP ZAP / Nuclei entegrasyonu** — `run_nuclei_scan`, `run_zap_baseline` (2026-05-09)
+- [x] **Web UI** — `python web_ui.py` → `http://localhost:8766` (standart kütüphane, 8 tool) (2026-05-09)
 
 ### Repo Hijyeni
-- [ ] **README'ye Gemini CLI bölümü** ekle.
-- [x] **Boş klasörleri sil** — `ai/`, `networking/`, `misc/` silindi (2026-05-09)
-- [x] **`requirements.txt`'i temizle** — `markdown`, `python-dotenv` çıkarıldı (2026-05-09)
-- [x] **`.gitignore` güncellendi** — `.cache/`, `security_report_*.md` eklendi (2026-05-09)
-- [ ] **`CHANGELOG.md`** aç — Faz tarihleri CLAUDE.md'de var.
+- [x] **README'ye Gemini CLI + setup.ps1 + CLI + HTTP API + env tablosu** eklendi (2026-05-09)
+- [x] **Boş klasörleri sil** — `ai/`, `networking/`, `misc/` (2026-05-09)
+- [x] **`requirements.txt`'i temizle** (2026-05-09)
+- [x] **`.gitignore` güncellendi** — `.cache/`, `security_report_*.md` (2026-05-09)
+- [x] **`CHANGELOG.md`** açıldı (2026-05-09)
 
 ---
 
 ## Bu Oturumda Tamamlanan (2026-05-09)
 
-**19 madde tamamlandı:**
+**26 madde tamamlandı.**
 
-### Buglar (10)
+### Buglar (12)
 1. `find_subdomains` URL prefix → `removeprefix()`
 2. `check_threat` OTX env key + 401/403 ayrıştırma
 3. Cookie HttpOnly + SameSite tespiti
-4. API server path traversal koruması (`_safe_path`)
-5. NVD rate limit + `NVD_API_KEY` env desteği
+4. API server path traversal koruması
+5. NVD rate limit + `NVD_API_KEY`
 6. MITRE ATT&CK 24h filesystem cache
 7. SAST venv/build/dist skip
-8. TLS doğrulama default açık (`_ssl_ctx` + opt-out)
-9. `generate_security_report` özet konum bug fix (`header_lines`)
-10. `fetch_security_news` `feedparser`'a geçiş
+8. TLS doğrulama default açık (`_ssl_ctx`)
+9. `generate_security_report` özet konumu
+10. `fetch_security_news` → `feedparser`
+11. NVD CPE-based sorgu (sürüm parse'i)
+12. `ensure_wiki_dir` yanıltıcı örnek dosya kaldırıldı
 
-### Eksikler (3)
-11. `tests/test_patterns.py` — 19 pytest testi
-12. `logging` modülüne geçiş (stderr)
-13. HIBP `Retry-After` header okuma
+### Eksikler & Güvenlik (7)
+13. `tests/test_patterns.py` — 19 test
+14. `logging` modülü (stderr)
+15. HIBP `Retry-After`
+16. API Bearer auth + path whitelist
+17. Secret entropy filtresi
+18. `find_exposed_secrets` wiki klasör skip
+19. Rapor JSON çıktısı
 
-### Güvenlik (2)
-14. API server Bearer auth + path whitelist
-15. `find_exposed_secrets` Shannon entropy filtresi
+### Yeni Özellikler (1)
+20. CLI modu (`--tool` + `--arg=val`)
 
-### Hijyen (4)
-16. `requirements.txt` temizliği (`markdown`, `python-dotenv` çıktı, `feedparser` geldi)
-17. `.gitignore`: `.cache/`, `security_report_*.md`
-18. `import re as _re` tekrarları temizlendi
-19. Boş klasörler silindi (`ai/`, `networking/`, `misc/`)
+### Hijyen & Dokümantasyon (6)
+21. `requirements.txt` temizliği
+22. `.gitignore` `.cache/`, `security_report_*.md`
+23. `import re as _re` tekrarları temizlendi
+24. Boş klasörler silindi
+25. `CHANGELOG.md` açıldı
+26. README baştan aşağı yenilendi (CLI, HTTP API, env tablosu, kurulum modları, troubleshooting)
 
 ---
 
-## Kalan Öncelikli Yol Haritası
+## Kalan Yol Haritası (düşük öncelik)
 
-1. **NVD CPE migration** → false-positive çözümü (en yüksek ROI)
-2. **Otomatik CVE → wiki** (CLAUDE.md Faz 5)
-3. **Faz 5 wiki kaynakları** (OWASP API Top 10 vs.)
-4. **CLI modu** (`--tool` flag)
-5. **README'ye Gemini CLI bölümü**
+1. Hata mesajı dili tam standardizasyonu (Türkçe karakter / ASCII tutarlılığı)
+2. NVD ve Wayback için cache uygulaması (mimari hazır, sadece çağrı yerlerinde `_cache_get/_cache_set`)
+3. Web UI: tüm 17 tool'u kapsayacak şekilde genişletme (şu an 8 tool)
+4. CI workflow (GitHub Actions): `pytest` + `ingest.py` doğrulaması
+5. Docker image (`Dockerfile`) — multi-stage, distroless

@@ -23,20 +23,63 @@ INSECURE_TLS = os.environ.get("SIBERSELMA_INSECURE_TLS", "0") == "1"
 
 
 def _ssl_ctx():
-    """TLS bağlamı oluşturur. INSECURE_TLS=1 ise doğrulama kapalı."""
+    """TLS baglamı olusturur. INSECURE_TLS=1 ise dogrulama kapalı."""
     ctx = ssl.create_default_context()
     if INSECURE_TLS:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
+
+# --- HTTP cache layer (SQLite, 24h TTL) ---
+CACHE_DB = os.path.join(BASE_DIR, ".cache", "http_cache.db")
+CACHE_TTL_SECONDS = 24 * 3600
+
+
+def _cache_get(tool: str, key: str):
+    """Cache'ten oku. None dönerse miss veya expired demek."""
+    try:
+        os.makedirs(os.path.dirname(CACHE_DB), exist_ok=True)
+        with sqlite3.connect(CACHE_DB) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS http_cache "
+                "(tool TEXT, key TEXT, response TEXT, fetched_at REAL, PRIMARY KEY(tool, key))"
+            )
+            row = conn.execute(
+                "SELECT response, fetched_at FROM http_cache WHERE tool=? AND key=?",
+                (tool, key),
+            ).fetchone()
+            if not row:
+                return None
+            response, fetched_at = row
+            import time as _time
+            if _time.time() - fetched_at > CACHE_TTL_SECONDS:
+                return None
+            return response
+    except Exception:
+        return None
+
+
+def _cache_set(tool: str, key: str, response: str):
+    try:
+        os.makedirs(os.path.dirname(CACHE_DB), exist_ok=True)
+        import time as _time
+        with sqlite3.connect(CACHE_DB) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS http_cache "
+                "(tool TEXT, key TEXT, response TEXT, fetched_at REAL, PRIMARY KEY(tool, key))"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO http_cache (tool, key, response, fetched_at) VALUES (?, ?, ?, ?)",
+                (tool, key, response, _time.time()),
+            )
+    except Exception:
+        pass
+
 def ensure_wiki_dir():
     """Wiki klasörünün var olduğundan emin olur."""
     if not os.path.exists(WIKI_DIR):
         os.makedirs(WIKI_DIR)
-        # Örnek bir dosya oluşturalım
-        with open(os.path.join(WIKI_DIR, "xss_ornek.md"), "w", encoding="utf-8") as f:
-            f.write("# Cross-Site Scripting (XSS)\n\nXSS zafiyeti, kullanıcı girdilerinin filtrelenmeden ekrana basılmasıyla oluşur.\n\n## Çözüm\nGirdileri sanitize edin.")
 
 @mcp.tool()
 def search_cyber_wiki(query: str) -> str:
@@ -426,7 +469,13 @@ def find_exposed_secrets(directory: str) -> str:
     findings = []
     scanned = 0
     scan_extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rb", ".php", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".conf", ".env", ".sh", ".bat", ".ps1"}
-    skip_dirs = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build", ".tox"}
+    skip_dirs = {
+        "node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build", ".tox",
+        # Wiki/cheatsheet/payload koleksiyonları — örnek payload'lar false-positive üretir
+        "PayloadsAllTheThings", "OWASP-CheatSheets", "cheatsheets",
+        "PentestGPT-main", "RedTeam-Tools-main", "Reverse-Engineering-main",
+        "Awesome-Asset-Discovery-master", "90DaysOfCyberSecurity-main",
+    }
 
     for root, dirs, files in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
@@ -503,24 +552,31 @@ def find_exposed_secrets(directory: str) -> str:
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 def _parse_requirements_txt(filepath):
+    """requirements.txt'i (paket, sürüm) çiftleri olarak döndürür. Sürüm yoksa None."""
     packages = []
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("-"):
+            line = line.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
                 continue
-            match = re.match(r'^([A-Za-z0-9_\-\.]+)', line)
-            if match:
-                packages.append(match.group(1))
+            # name==1.2.3, name>=1.2, name~=1.2 vb.
+            m = re.match(r'^([A-Za-z0-9_\-\.]+)\s*(?:==|>=|<=|~=|!=)?\s*([0-9][0-9A-Za-z\.\-+]*)?', line)
+            if m:
+                packages.append((m.group(1), m.group(2)))
     return packages
 
+
 def _parse_package_json(filepath):
+    """package.json'ı (paket, sürüm) çiftleri olarak döndürür."""
     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
         data = json.load(f)
     packages = []
     for section in ("dependencies", "devDependencies"):
-        if section in data:
-            packages.extend(data[section].keys())
+        deps = data.get(section, {})
+        for name, ver in deps.items():
+            # ^1.2.3 / ~1.2.3 / 1.2.3 — operator'leri sıyır
+            clean = re.sub(r'^[\^~><=\s]+', '', str(ver)).strip() or None
+            packages.append((name, clean))
     return packages
 
 @mcp.tool()
@@ -560,11 +616,23 @@ def check_dependencies(file_path: str) -> str:
     checked = 0
     errors = 0
 
-    for idx, pkg in enumerate(packages[:20]):
+    for idx, pkg_entry in enumerate(packages[:20]):
+        if isinstance(pkg_entry, tuple):
+            pkg_name, pkg_ver = pkg_entry
+        else:
+            pkg_name, pkg_ver = pkg_entry, None
         if idx > 0:
             time.sleep(sleep_between)
         try:
-            api_url = f"{NVD_API_URL}?keywordSearch={urllib.request.quote(pkg)}&resultsPerPage=5"
+            # CPE-based query (sürüm varsa) — keyword'den çok daha az false-positive üretir
+            if pkg_ver:
+                cpe = f"cpe:2.3:a:*:{pkg_name.lower()}:{pkg_ver}:*:*:*:*:*:*:*"
+                api_url = f"{NVD_API_URL}?cpeName={urllib.request.quote(cpe)}&resultsPerPage=5"
+            else:
+                # Sürüm yok → virtualMatchString ile ürün adına göre dene
+                vms = f"cpe:2.3:a:*:{pkg_name.lower()}:*:*:*:*:*:*:*:*"
+                api_url = f"{NVD_API_URL}?virtualMatchString={urllib.request.quote(vms)}&resultsPerPage=5"
+
             headers = {"User-Agent": "SiberSelma/1.0"}
             if nvd_key:
                 headers["apiKey"] = nvd_key
@@ -574,9 +642,10 @@ def check_dependencies(file_path: str) -> str:
             checked += 1
 
             total = data.get("totalResults", 0)
+            label = f"{pkg_name}=={pkg_ver}" if pkg_ver else pkg_name
             if total > 0:
                 vuln_count += 1
-                out.append(f"\n### {pkg} — {total} CVE bulundu")
+                out.append(f"\n### {label} — {total} CVE bulundu")
                 for vuln in data.get("vulnerabilities", [])[:3]:
                     cve = vuln.get("cve", {})
                     cve_id = cve.get("id", "?")
@@ -606,17 +675,19 @@ def check_dependencies(file_path: str) -> str:
 from datetime import datetime
 
 @mcp.tool()
-def generate_security_report(url: str, directory: str) -> str:
+def generate_security_report(url: str, directory: str, output_format: str = "markdown") -> str:
     """
     Tüm güvenlik tool'larını sırayla çalıştırarak kapsamlı bir güvenlik raporu üretir ve
-    security_report_YYYY-MM-DD.md dosyasına kaydeder.
+    security_report_YYYY-MM-DD.md (veya .json) dosyasına kaydeder.
 
     Args:
         url: Analiz edilecek web sitesi URL'i (örn: "https://example.com")
         directory: Analiz edilecek proje dizininin tam yolu
+        output_format: "markdown" (default) veya "json"
     """
     date_str = datetime.now().strftime("%Y-%m-%d")
-    report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.md")
+    ext = "json" if output_format == "json" else "md"
+    report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.{ext}")
 
     header_lines = []
     sections = []
@@ -731,6 +802,27 @@ def generate_security_report(url: str, directory: str) -> str:
     # Özeti başlık ile bölümler arasına yerleştir
     full_report = "\n".join(header_lines + summary_lines + sections)
 
+    if output_format == "json":
+        report_obj = {
+            "date": date_str,
+            "target_url": url,
+            "project_dir": directory,
+            "summary": {"critical": critical, "high": high, "medium": medium},
+            "sections": {
+                "pentest": sections[1] if len(sections) > 1 else "",
+                "sast": sections[3] if len(sections) > 3 else "",
+                "headers": sections[5] if len(sections) > 5 else "",
+                "dependencies": sections[7] if len(sections) > 7 else "",
+                "secrets": sections[9] if len(sections) > 9 else "",
+            },
+        }
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report_obj, f, ensure_ascii=False, indent=2)
+            return json.dumps(report_obj, ensure_ascii=False, indent=2) + f"\n\n---\nRapor kaydedildi: {report_path}"
+        except OSError as e:
+            return json.dumps(report_obj, ensure_ascii=False, indent=2) + f"\n\n---\nUyarı: Rapor dosyaya kaydedilemedi ({e})"
+
     try:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(full_report)
@@ -750,14 +842,25 @@ def find_subdomains(domain: str) -> str:
     domain = domain.strip().removeprefix("https://").removeprefix("http://").split("/")[0]
     url = f"https://crt.sh/?q=%.{urllib.request.quote(domain)}&output=json"
 
-    ctx = _ssl_ctx()
+    cached = _cache_get("crtsh", domain)
+    if cached:
+        try:
+            data = json.loads(cached)
+        except Exception:
+            data = None
+    else:
+        data = None
 
-    req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-        data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        return f"crt.sh sorgusu basarisiz: {e}"
+    if data is None:
+        ctx = _ssl_ctx()
+        req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
+            _cache_set("crtsh", domain, raw)
+        except Exception as e:
+            return f"crt.sh sorgusu basarisiz: {e}"
 
     subdomains = set()
     for entry in data:
@@ -853,6 +956,182 @@ def check_history(url: str) -> str:
 
 
 @mcp.tool()
+def run_nuclei_scan(target: str, severity: str = "medium,high,critical", timeout_sec: int = 120) -> str:
+    """
+    nuclei tarayicisini lokal olarak calistirir (yuklu olmasi gerekir).
+    nuclei kurulumu: https://github.com/projectdiscovery/nuclei
+
+    Args:
+        target: Taranacak URL
+        severity: Virgulle ayrilmis seviye listesi (info, low, medium, high, critical)
+        timeout_sec: Taramanin maksimum suresi (saniye)
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("nuclei"):
+        return (
+            "nuclei bulunamadi. Kurulum:\n"
+            "  go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest\n"
+            "  veya: https://github.com/projectdiscovery/nuclei/releases"
+        )
+
+    if not target.startswith(("http://", "https://")):
+        target = "https://" + target
+
+    cmd = ["nuclei", "-u", target, "-silent", "-jsonl", "-severity", severity, "-timeout", "10"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        return f"nuclei zaman asimina ugradi ({timeout_sec}s)."
+    except Exception as e:
+        return f"nuclei calistirilamadi: {e}"
+
+    findings = []
+    for line in (proc.stdout or "").splitlines():
+        try:
+            obj = json.loads(line)
+            findings.append({
+                "template": obj.get("template-id") or obj.get("templateID", ""),
+                "severity": obj.get("info", {}).get("severity", ""),
+                "name": obj.get("info", {}).get("name", ""),
+                "matched": obj.get("matched-at") or obj.get("matched", ""),
+            })
+        except Exception:
+            continue
+
+    out = [f"## Nuclei Tarama — {target}\n"]
+    if not findings:
+        out.append("Hicbir bulgu yok.")
+        if proc.returncode != 0 and proc.stderr:
+            out.append(f"\nstderr: {proc.stderr[:500]}")
+        return "\n".join(out)
+
+    by_sev = {}
+    for f in findings:
+        by_sev.setdefault(f["severity"], []).append(f)
+
+    out.append(f"**Toplam bulgu:** {len(findings)}\n")
+    for sev in ("critical", "high", "medium", "low", "info"):
+        if sev not in by_sev:
+            continue
+        out.append(f"### {sev.upper()} ({len(by_sev[sev])})")
+        for f in by_sev[sev][:10]:
+            out.append(f"  - **{f['name']}** ({f['template']}) → `{f['matched']}`")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def run_zap_baseline(target: str, zap_url: str = "http://localhost:8080") -> str:
+    """
+    OWASP ZAP'in baslattigi REST API'yi kullanarak baseline (passive) tarama yapar.
+    ZAP'in arkaplanda calismasi gerekir: zap.sh -daemon -port 8080 -config api.disablekey=true
+
+    Args:
+        target: Taranacak URL
+        zap_url: ZAP API endpoint'i (varsayilan: http://localhost:8080)
+    """
+    if not target.startswith(("http://", "https://")):
+        target = "https://" + target
+
+    ctx = _ssl_ctx()
+    api_key = os.environ.get("ZAP_API_KEY", "")
+    api_suffix = f"&apikey={urllib.request.quote(api_key)}" if api_key else ""
+
+    spider_url = f"{zap_url}/JSON/spider/action/scan/?url={urllib.request.quote(target)}{api_suffix}"
+    alerts_url = f"{zap_url}/JSON/core/view/alerts/?baseurl={urllib.request.quote(target)}{api_suffix}"
+
+    try:
+        req = urllib.request.Request(spider_url, headers={"User-Agent": "SiberSelma/1.0"})
+        urllib.request.urlopen(req, timeout=10, context=ctx).read()
+    except Exception as e:
+        return f"ZAP API'ye baglanilamadi ({zap_url}): {e}\nZAP'in -daemon modunda calistigindan emin olun."
+
+    # Spider'in bitmesini bekle
+    import time as _time
+    _time.sleep(5)
+
+    try:
+        req = urllib.request.Request(alerts_url, headers={"User-Agent": "SiberSelma/1.0"})
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return f"ZAP alerts alinamadi: {e}"
+
+    alerts = data.get("alerts", [])
+    if not alerts:
+        return f"## ZAP Baseline — {target}\n\nHicbir uyari yok."
+
+    by_risk = {}
+    for a in alerts:
+        risk = a.get("risk", "Informational")
+        by_risk.setdefault(risk, []).append(a)
+
+    out = [f"## ZAP Baseline Tarama — {target}\n", f"**Toplam uyari:** {len(alerts)}\n"]
+    for risk in ("High", "Medium", "Low", "Informational"):
+        if risk not in by_risk:
+            continue
+        out.append(f"### {risk} ({len(by_risk[risk])})")
+        for a in by_risk[risk][:8]:
+            out.append(f"  - **{a.get('name', '?')}** → `{a.get('url', '')[:80]}`")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
+def batch_scan_attack_surface(domain: str, max_subdomains: int = 10) -> str:
+    """
+    Bir domain'in subdomain'lerini kesfeder, her birini security header taramasindan gecirir
+    ve toplu sonuc raporu uretir.
+
+    Args:
+        domain: Kok domain (orn: "example.com")
+        max_subdomains: Header taramasi yapilacak maksimum subdomain sayisi (varsayilan: 10)
+    """
+    domain = domain.strip().removeprefix("https://").removeprefix("http://").split("/")[0]
+    sub_result = find_subdomains(domain)
+
+    # find_subdomains ciktisindan subdomain'leri cikar
+    found = re.findall(r'`([a-zA-Z0-9\.\-]+\.' + re.escape(domain) + r')`', sub_result)
+    if not found:
+        return f"## Toplu Saldiri Yuzeyi Taramasi — {domain}\n\nSubdomain bulunamadi.\n\n{sub_result}"
+
+    targets = list(dict.fromkeys(found))[:max_subdomains]
+
+    out = [f"## Toplu Saldiri Yuzeyi Taramasi — {domain}\n"]
+    out.append(f"**Kesfedilen subdomain:** {len(found)} (header taramasi: {len(targets)})\n")
+
+    summary_rows = []
+    for sub in targets:
+        url = f"https://{sub}"
+        try:
+            header_result = check_security_headers(url)
+            score_match = re.search(r'Guvenlik Skoru:\*?\*?\s*(\d+)/100', header_result)
+            score = int(score_match.group(1)) if score_match else 0
+            missing_match = re.search(r'Eksik Header.*?\((\d+)\)', header_result)
+            missing = int(missing_match.group(1)) if missing_match else 0
+            summary_rows.append((sub, score, missing, "OK"))
+        except Exception as e:
+            summary_rows.append((sub, 0, 0, f"hata: {e}"))
+
+    summary_rows.sort(key=lambda r: r[1])
+
+    out.append("| Subdomain | Skor | Eksik Header | Durum |")
+    out.append("|-----------|------|--------------|-------|")
+    for sub, score, missing, status in summary_rows:
+        out.append(f"| `{sub}` | {score}/100 | {missing} | {status} |")
+
+    weak = [r for r in summary_rows if r[1] < 50 and r[3] == "OK"]
+    if weak:
+        out.append(f"\n### Dikkat — Skoru 50 altinda {len(weak)} subdomain")
+        for sub, score, _, _ in weak:
+            out.append(f"  - `{sub}` ({score}/100)")
+
+    return "\n".join(out)
+
+
+@mcp.tool()
 def check_threat(target: str) -> str:
     """
     AlienVault OTX API ile bir IP adresi veya domain'in tehdit gecmisini sorgular.
@@ -865,6 +1144,18 @@ def check_threat(target: str) -> str:
     endpoint_type = "IPv4" if is_ip else "domain"
     api_url = f"https://otx.alienvault.com/api/v1/indicators/{endpoint_type}/{urllib.request.quote(target)}/general"
 
+    cached = _cache_get("otx", target)
+    if cached:
+        try:
+            data = json.loads(cached)
+        except Exception:
+            data = None
+    else:
+        data = None
+
+    if data is not None:
+        return _format_otx_report(target, data)
+
     ctx = _ssl_ctx()
 
     otx_headers = {"User-Agent": "SiberSelma/1.0"}
@@ -875,7 +1166,9 @@ def check_threat(target: str) -> str:
     req = urllib.request.Request(api_url, headers=otx_headers)
     try:
         resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-        data = json.loads(resp.read().decode("utf-8"))
+        raw = resp.read().decode("utf-8")
+        data = json.loads(raw)
+        _cache_set("otx", target, raw)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam degiskeni olarak tanimlayin."
@@ -885,6 +1178,10 @@ def check_threat(target: str) -> str:
     except Exception as e:
         return f"OTX sorgusu basarisiz: {e}"
 
+    return _format_otx_report(target, data)
+
+
+def _format_otx_report(target: str, data: dict) -> str:
     out = [f"## AlienVault OTX Tehdit Raporu — {target}\n"]
 
     pulse_count = data.get("pulse_info", {}).get("count", 0)
@@ -905,9 +1202,8 @@ def check_threat(target: str) -> str:
             for p in pulses:
                 out.append(f"  - {p.get('name', '?')} ({p.get('created', '')[:10]})")
     else:
-        out.append("Bilinen tehdit kaydı bulunamadi.")
+        out.append("Bilinen tehdit kaydi bulunamadi.")
 
-    tags = data.get("pulse_info", {}).get("related_pulse_indicator_counts", {})
     malware = data.get("malware", [])
     if malware:
         out.append(f"\n**Iliskili Malware:** {len(malware)} kayit")
@@ -1127,6 +1423,161 @@ def fetch_security_news(max_items: int = 10) -> str:
     return "\n".join(out)
 
 
+def auto_cve_scan_to_wiki(verbose: bool = False) -> dict:
+    """
+    Server baslangicinda requirements.txt'i NVD'ye sorar, ilk kez gorulen CVE'leri
+    docs/wiki/cve/CVE-XXXX-YYYYY.md olarak yazar.
+    """
+    req_path = os.path.join(BASE_DIR, "requirements.txt")
+    if not os.path.exists(req_path):
+        return {"new_cves": 0, "skipped": True}
+
+    cve_dir = os.path.join(WIKI_DIR, "cve")
+    os.makedirs(cve_dir, exist_ok=True)
+
+    nvd_key = os.environ.get("NVD_API_KEY", "")
+    sleep_between = 0.7 if nvd_key else 6.5
+    ctx = _ssl_ctx()
+
+    packages = _parse_requirements_txt(req_path)
+    new_cve_count = 0
+    queried = 0
+
+    import time as _time
+    for idx, (pkg_name, pkg_ver) in enumerate(packages):
+        if not pkg_ver:
+            continue  # Sürüm yoksa CPE eşleşmesi belirsiz, atla
+        if idx > 0:
+            _time.sleep(sleep_between)
+
+        cpe = f"cpe:2.3:a:*:{pkg_name.lower()}:{pkg_ver}:*:*:*:*:*:*:*"
+        api_url = f"{NVD_API_URL}?cpeName={urllib.request.quote(cpe)}&resultsPerPage=20"
+        headers = {"User-Agent": "SiberSelma/1.0"}
+        if nvd_key:
+            headers["apiKey"] = nvd_key
+
+        try:
+            req = urllib.request.Request(api_url, headers=headers)
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            data = json.loads(resp.read().decode("utf-8"))
+            queried += 1
+        except Exception:
+            continue
+
+        for vuln in data.get("vulnerabilities", []):
+            cve = vuln.get("cve", {})
+            cve_id = cve.get("id", "")
+            if not cve_id:
+                continue
+            fname = os.path.join(cve_dir, f"{cve_id}.md")
+            if os.path.exists(fname):
+                continue
+
+            desc = next(
+                (d["value"] for d in cve.get("descriptions", []) if d.get("lang") == "en"),
+                "",
+            )
+            metrics = cve.get("metrics", {})
+            score = "N/A"
+            severity = "N/A"
+            for mk in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+                if mk in metrics and metrics[mk]:
+                    cvss = metrics[mk][0].get("cvssData", {})
+                    score = cvss.get("baseScore", "N/A")
+                    severity = cvss.get("baseSeverity", "N/A")
+                    break
+
+            published = cve.get("published", "")[:10]
+            md = (
+                f"# {cve_id}\n\n"
+                f"**Paket:** `{pkg_name}=={pkg_ver}`  \n"
+                f"**CVSS:** {score} ({severity})  \n"
+                f"**Yayin:** {published}  \n"
+                f"**NVD:** https://nvd.nist.gov/vuln/detail/{cve_id}\n\n"
+                f"## Aciklama\n\n{desc}\n\n"
+                f"## Etiketler\n\n#cve #{pkg_name.lower()} #{severity.lower()}\n"
+            )
+            try:
+                with open(fname, "w", encoding="utf-8") as f:
+                    f.write(md)
+                new_cve_count += 1
+                if verbose:
+                    print(f"  [+] {cve_id} ({pkg_name} {pkg_ver}) -> {fname}", file=__import__("sys").stderr)
+            except OSError:
+                continue
+
+    return {"new_cves": new_cve_count, "queried": queried, "skipped": False}
+
+
+CLI_TOOLS = {
+    "wiki": (search_cyber_wiki, ["query"]),
+    "remediation": (get_remediation_plan, ["vulnerability_name"]),
+    "sast": (analyze_project_vulnerabilities, ["directory_path"]),
+    "pentest": (run_basic_pentest, ["target"]),
+    "headers": (check_security_headers, ["url"]),
+    "secrets": (find_exposed_secrets, ["directory"]),
+    "deps": (check_dependencies, ["file_path"]),
+    "report": (generate_security_report, ["url", "directory"]),
+    "subdomains": (find_subdomains, ["domain"]),
+    "batch": (batch_scan_attack_surface, ["domain"]),
+    "nuclei": (run_nuclei_scan, ["target"]),
+    "zap": (run_zap_baseline, ["target"]),
+    "history": (check_history, ["url"]),
+    "threat": (check_threat, ["target"]),
+    "attack": (get_attack_techniques, ["vulnerability"]),
+    "breach": (check_breach, ["email"]),
+    "news": (fetch_security_news, ["max_items"]),
+}
+
+
+def _run_cli(argv):
+    """Basit CLI: python server.py --tool <name> --<arg>=<value>"""
+    args = {}
+    tool_name = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--tool" and i + 1 < len(argv):
+            tool_name = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--"):
+            key, _, val = a[2:].partition("=")
+            if not val and i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                val = argv[i + 1]
+                i += 2
+            else:
+                i += 1
+            args[key] = val
+            continue
+        i += 1
+
+    if not tool_name or tool_name not in CLI_TOOLS:
+        print("Kullanim: python server.py --tool <name> --<arg>=<value>", file=__import__("sys").stderr)
+        print(f"Tool'lar: {', '.join(CLI_TOOLS)}", file=__import__("sys").stderr)
+        return 2
+
+    func, params = CLI_TOOLS[tool_name]
+    call_kwargs = {}
+    for p in params:
+        if p in args:
+            v = args[p]
+            # int dönüşümü gereken yerler
+            if p == "max_items":
+                try:
+                    v = int(v)
+                except ValueError:
+                    pass
+            call_kwargs[p] = v
+        else:
+            print(f"Eksik parametre: --{p}", file=__import__("sys").stderr)
+            return 2
+
+    result = func(**call_kwargs)
+    print(result)
+    return 0
+
+
 if __name__ == "__main__":
     import sys
     import logging
@@ -1136,6 +1587,22 @@ if __name__ == "__main__":
         format="[%(asctime)s] %(levelname)s: %(message)s",
     )
     ensure_wiki_dir()
+
+    if len(sys.argv) > 1 and "--tool" in sys.argv:
+        sys.exit(_run_cli(sys.argv[1:]))
+
+    # Otomatik CVE taraması (opt-in): SIBERSELMA_AUTO_CVE_SCAN=1
+    if os.environ.get("SIBERSELMA_AUTO_CVE_SCAN", "0") == "1":
+        import threading
+        def _bg_cve():
+            try:
+                logging.info("Otomatik CVE taramasi baslatildi (arkaplan)...")
+                result = auto_cve_scan_to_wiki(verbose=True)
+                logging.info(f"CVE taramasi tamamlandi: {result}")
+            except Exception as e:
+                logging.warning(f"CVE taramasi hata verdi: {e}")
+        threading.Thread(target=_bg_cve, daemon=True).start()
+
     logging.info("SiberSelma MCP Sunucusu baslatiliyor...")
     logging.info("Standart I/O uzerinden iletisim dinleniyor (Claude Code vb. icin hazir)")
     mcp.run()

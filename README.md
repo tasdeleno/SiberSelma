@@ -1,161 +1,199 @@
 # SiberSelma 🕵️‍♀️
 
-SiberSelma, **Gemini**, **Claude** ve diğer yapay zeka asistanlarına siber güvenlik bilgisi kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur. 737'den fazla siber güvenlik dokümanını indeksleyerek asistanın sorularınızı wiki tabanlı bir bilgi bankasıyla yanıtlamasını sağlar.
+**SiberSelma**, Claude / Gemini gibi yapay zeka asistanlarına siber güvenlik bilgisi ve yetenekleri kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur.
+
+İki şey sağlar:
+1. **Bilgi tabanı** — 737+ siber güvenlik dokümanını SQLite FTS5 ile indeksler ve aramaya açar.
+2. **Aktif güvenlik tool'ları** — SAST tarama, pentest, secret tespiti, CVE kontrolü, tehdit istihbaratı ve daha fazlası.
+
+> Her tool MCP üzerinden Claude/Gemini'ye, **HTTP API** olarak Antigravity vb. araçlara, **CLI** olarak da terminale açıktır.
 
 ---
 
-## Mevcut Tool'lar
+## İçindekiler
 
-| Tool | Açıklama | Durum |
-|------|----------|-------|
-| `search_cyber_wiki` | 737 wiki dosyasında tam metin arama (AND + OR fallback) | ✅ Aktif |
-| `get_remediation_plan` | Zafiyet için wiki'den çözüm planı getirir | ✅ Aktif |
-| `analyze_project_vulnerabilities` | .py/.js/.ts dosyalarında 17 tehlikeli pattern tarayan SAST tarayıcı | ✅ Aktif |
-| `run_basic_pentest` | HTTP header, cookie, form, sunucu bilgisi güvenlik analizi | ✅ Aktif |
-| `check_security_headers` | 10 güvenlik header kontrolü + skor + bilgi sızıntısı tespiti | ✅ Aktif |
-| `check_dependencies` | NVD API ile bağımlılık CVE taraması (CVSS skorlarıyla) | ✅ Aktif |
-| `find_exposed_secrets` | 12 pattern ile hardcode secret tarama + .env git kontrolü | ✅ Aktif |
-| `generate_security_report` | Tüm tool'ları çalıştırıp kritik/yüksek/orta özeti ile `security_report_YYYY-MM-DD.md` üretir | ✅ Aktif |
-
-### Harici API Tool'ları
-
-| Tool | API | Açıklama |
-|------|-----|----------|
-| `find_subdomains(domain)` | crt.sh | SSL loglarından subdomain keşfi (key gerektirmez) |
-| `check_history(url)` | Wayback Machine | Eski versiyonlarda açık endpoint/config taraması |
-| `check_threat(ip_or_domain)` | AlienVault OTX | IP/domain tehdit geçmişi, pulse sayısı |
-| `get_attack_techniques(vuln)` | MITRE ATT&CK | Zafiyet için saldırgan taktik ve teknikleri |
-| `check_breach(email)` | Have I Been Pwned | Mail veri ihlali kontrolü (HIBP_API_KEY gerekir) |
-| `fetch_security_news(n)` | THN + BleepingComputer | RSS → `docs/wiki/news/` otomatik kayıt |
+- [Hızlı Başlangıç](#hızlı-başlangıç)
+- [Tool'lar](#toollar)
+- [Çalıştırma Modları](#çalıştırma-modları)
+- [Konfigürasyon (Env)](#konfigürasyon-env)
+- [Kurulum (Detaylı)](#kurulum-detaylı)
+- [Sık Karşılaşılan Sorunlar](#sık-karşılaşılan-sorunlar)
+- [Proje Yapısı](#proje-yapısı)
+- [Test & Geliştirme](#test--geliştirme)
 
 ---
 
-## Kurulum
-
-### 1. Repoyu Klonla
+## Hızlı Başlangıç
 
 ```bash
 git clone https://github.com/tasdeleno/SiberSelma.git
 cd SiberSelma
+pip install -r requirements.txt
+python ingest.py            # 737 wiki dosyasını indeksle
+python server.py            # MCP sunucusu (stdio)
 ```
 
-### 2. Bağımlılıkları Yükle
+Bir tool'u doğrudan terminalden test et:
+```bash
+python server.py --tool wiki --query="XSS"
+python server.py --tool headers --url=https://example.com
+python server.py --tool subdomains --domain=example.com
+```
 
-Config'de hangi `python.exe` yolunu kullanacaksanız, bağımlılıkları **o Python** ile kurun:
+---
+
+## Tool'lar
+
+### 🔍 Bilgi Tabanı
+
+| Tool | Açıklama |
+|------|----------|
+| `search_cyber_wiki(query)` | 737 wiki dosyasında FTS5 araması (AND → OR fallback) |
+| `get_remediation_plan(vuln)` | Zafiyet için wiki'den çözüm planı |
+
+### 🛡️ Statik & Dinamik Analiz
+
+| Tool | Açıklama |
+|------|----------|
+| `analyze_project_vulnerabilities(dir)` | `.py/.js/.ts` dosyalarında 17 tehlikeli pattern (SAST) |
+| `find_exposed_secrets(dir)` | 12 secret pattern + Shannon entropy filtresi + `.env` git kontrolü |
+| `run_basic_pentest(url)` | HTTP header, cookie (HttpOnly/SameSite/Secure), form, sunucu bilgi sızıntısı |
+| `check_security_headers(url)` | 10 güvenlik header'ı kontrolü + skor |
+| `check_dependencies(file)` | NVD API ile **CPE-based** CVE taraması (paket sürümünden tam eşleşme) |
+
+### 🌐 Harici Tehdit İstihbaratı
+
+| Tool | Kaynak | Notlar |
+|------|--------|--------|
+| `find_subdomains(domain)` | crt.sh SSL logları | Key gerektirmez |
+| `check_history(url)` | Wayback Machine | Hassas yol arama |
+| `check_threat(target)` | AlienVault OTX | Key opsiyonel — `ALIENVAULT_OTX_KEY` |
+| `get_attack_techniques(vuln)` | MITRE ATT&CK | 24h lokal cache |
+| `check_breach(email)` | Have I Been Pwned | `HIBP_API_KEY` zorunlu |
+| `fetch_security_news(n)` | THN + BleepingComputer | `feedparser`; `docs/wiki/news/` altına yazar |
+
+### 📋 Orkestrasyon
+
+| Tool | Açıklama |
+|------|----------|
+| `generate_security_report(url, dir)` | Tüm analiz tool'larını sırayla koşturur, kritik/yüksek/orta özet tablosu üretir |
+
+> `output_format="json"` parametresi ile yapılandırılmış JSON rapor da üretebilir.
+
+---
+
+## Çalıştırma Modları
+
+SiberSelma üç farklı modda çalışır.
+
+### 1. MCP Server (Claude/Gemini için)
 
 ```bash
-# Hangi python kullanacaksanız onunla kur (venv OLMADAN, global kurulum):
-C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe -m pip install -r requirements.txt
+python server.py
+```
+stdio üzerinden MCP istemcisine bağlanır. Konfigürasyon detayları için aşağıdaki [Kurulum](#kurulum-detaylı) bölümüne bak.
 
-# macOS / Linux
-python3 -m pip install -r requirements.txt
+### 2. CLI (Tek tool, doğrudan terminal)
+
+```bash
+python server.py --tool <name> --<arg>=<value>
 ```
 
-> **Önemli:** `pip install` yaptığınız Python ile config'deki `command` yolu aynı olmalı. Farklı Python sürümlerine kurulum yapılırsa MCP sunucu `ModuleNotFoundError` ile başlayamaz.
+Örnekler:
+```bash
+python server.py --tool sast --directory_path=./my-project
+python server.py --tool report --url=https://example.com --directory=./my-project
+python server.py --tool breach --email=user@example.com
+python server.py --tool attack --vulnerability="SQL Injection"
+```
 
-### 3. Wiki Dosyalarını İndeksle
+### 3. HTTP API (Antigravity, n8n, Web UI vb.)
 
-`docs/wiki/` klasöründeki tüm `.md` dosyaları SQLite FTS5 ile indekslenir:
+```bash
+python api_server.py
+```
+`http://localhost:8765` üzerinden REST endpoint'leri açar:
 
+| Endpoint | Parametre |
+|----------|-----------|
+| `/wiki` | `?q=XSS` |
+| `/pentest` | `?url=https://x.com` |
+| `/headers` | `?url=https://x.com` |
+| `/sast` | `?dir=...` |
+| `/secrets` | `?dir=...` |
+| `/deps` | `?file=requirements.txt` |
+| `/report` | `?url=...&dir=...` |
+| `/subdomains` | `?domain=x.com` |
+| `/history` | `?url=...` |
+
+> **Güvenlik:** Yerel dosya sistemi taraması yapan endpoint'ler (`/sast`, `/secrets`, `/deps`, `/report`) yalnızca `SIBERSELMA_ALLOWED_PATHS` env'inde tanımlı kökler altında çalışır. Default: proje kökü. `SIBERSELMA_API_TOKEN` tanımlıysa Bearer auth zorunlu olur.
+
+---
+
+## Konfigürasyon (Env)
+
+Tüm tool'lar opsiyonel ortam değişkenleriyle yapılandırılabilir:
+
+| Değişken | Etki | Default |
+|----------|------|---------|
+| `HIBP_API_KEY` | Have I Been Pwned API key (zorunlu — yoksa `check_breach` çalışmaz) | yok |
+| `ALIENVAULT_OTX_KEY` | OTX API key (opsiyonel) | yok |
+| `NVD_API_KEY` | NVD CVE API key (rate limit'i 5→50 req/30s yapar) | yok |
+| `SIBERSELMA_INSECURE_TLS` | `1` ise TLS doğrulamasını kapatır (self-signed pentest hedefleri için) | `0` (TLS açık) |
+| `SIBERSELMA_ALLOWED_PATHS` | API server için izinli kök dizinler (`;` ile ayrılır) | proje kökü |
+| `SIBERSELMA_API_TOKEN` | API server Bearer auth token | yok (auth devre dışı) |
+
+---
+
+## Kurulum (Detaylı)
+
+### Bağımlılıklar
+
+```bash
+# Hangi Python ile çalıştıracaksanız onunla kurun (config'deki yola dikkat!)
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt`: `mcp`, `httpx`, `pytest`, `feedparser`.
+
+### Wiki İndeksleme
+
+`docs/wiki/` altındaki tüm `.md` dosyaları SQLite FTS5'e yazılır:
 ```bash
 python ingest.py
 ```
 
-Başarılı çıktı:
-```
-'docs\wiki' içerisindeki dosyalar taranıyor...
+Yeni dosya ekledikten / sildikten sonra tekrar çalıştır — script deduplikasyon yapar (yeni ekler, silineni atar, mevcut dosyaları günceller).
 
-[SUMMARY] Indexing Complete:
-  [+] 737 yeni dosya eklendi
-  [~] 0 dosya guncellendi
-  [-] 0 dosya silindi
-  [*] Toplam: 737 dosya
+### Claude Desktop
 
-[OK] SiberSelma sunucusu (server.py) hazir.
-```
+`%APPDATA%\Claude\claude_desktop_config.json`:
 
----
-
-## Desteklenen Platformlar
-
-SiberSelma, MCP (Model Context Protocol) standardını kullanır. MCP destekleyen **tüm AI istemcileriyle** çalışır:
-
-| Platform | Konfigürasyon Dosyası | Durum |
-|----------|----------------------|-------|
-| Claude Desktop | `%APPDATA%\Claude\claude_desktop_config.json` | ✅ Destekleniyor |
-| Gemini CLI | `%USERPROFILE%\.gemini\settings.json` | ✅ Destekleniyor |
-| Claude Code (CLI) | Otomatik (stdio) | ✅ Destekleniyor |
-| Diğer MCP İstemcileri | İstemciye göre değişir | ✅ Destekleniyor |
-
----
-
-### Önemli: Kurulum Yolu Seçimi
-
-> **Windows kullanıcıları için kritik not:** Repoyu `Masaüstü` (Desktop) gibi Türkçe karakter içeren bir dizine klonlamayın. JSON config dosyaları bu karakterleri yanlış kodlayarak `MasaÃ¼stÃ¼` gibi bozuk yollara dönüştürebilir — bu durumda MCP sunucu başlatılamaz.
->
-> **Önerilen kurulum yolu:** `C:\SiberSelma\` veya `C:\Users\kullanici\SiberSelma\`
-
----
-
-### Claude Desktop Kurulumu
-
-`%APPDATA%\Claude\claude_desktop_config.json` dosyasını açıp şu satırları ekle:
-
-**Windows:**
 ```json
 {
   "mcpServers": {
     "SiberSelma": {
-      "command": "C:\\Users\\kullanici\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
-      "args": ["C:\\SiberSelma\\server.py"]
+      "command": "C:\\Path\\To\\python.exe",
+      "args": ["C:\\SiberSelma\\server.py"],
+      "env": {
+        "HIBP_API_KEY": "...",
+        "NVD_API_KEY": "..."
+      }
     }
   }
 }
 ```
 
-**macOS / Linux:**
+### Gemini CLI
+
+`%USERPROFILE%\.gemini\settings.json` (veya `~/.gemini/settings.json`):
+
 ```json
 {
   "mcpServers": {
     "SiberSelma": {
-      "command": "python3",
-      "args": ["/home/kullanici/SiberSelma/server.py"]
-    }
-  }
-}
-```
-
-> `python.exe` yolunu bulmak için terminalde `where python` (Windows) veya `which python3` (macOS/Linux) çalıştır.
->
-> Zaten başka MCP sunucuların varsa, `mcpServers` içine yalnızca `"SiberSelma": { ... }` bloğunu eklemen yeterli.
-
-Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
-
----
-
-### Gemini CLI Kurulumu
-
-`%USERPROFILE%\.gemini\settings.json` (macOS/Linux: `~/.gemini/settings.json`) dosyasını aç veya oluştur:
-
-**Windows:**
-```json
-{
-  "mcpServers": {
-    "SiberSelma": {
-      "command": "C:\\Users\\kullanici\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
-      "args": ["C:\\SiberSelma\\server.py"]
-    }
-  }
-}
-```
-
-**macOS / Linux:**
-```json
-{
-  "mcpServers": {
-    "SiberSelma": {
-      "command": "python3",
-      "args": ["/home/kullanici/SiberSelma/server.py"]
+      "command": "python",
+      "args": ["/path/to/SiberSelma/server.py"]
     }
   }
 }
@@ -163,307 +201,97 @@ Dosyayı kaydedip **Claude Desktop'ı yeniden başlat.**
 
 Doğrulama:
 ```bash
-# Gemini CLI'da mevcut MCP sunucularını listele
 /mcp list
-
-# SiberSelma tool'larını test et
 @SiberSelma search_cyber_wiki "XSS"
 ```
 
----
+### Otomatik Kurulum (Windows)
 
-### Diğer MCP İstemcileri
-
-SiberSelma standart **stdio** transport kullanır. MCP destekleyen herhangi bir istemciye bağlamak için:
-
-```bash
-# Sunucuyu doğrudan çalıştır (stdio üzerinden iletişim kurar)
-python server.py
+```powershell
+.\setup.ps1
 ```
+Claude Desktop ve Gemini CLI config'lerini otomatik oluşturur.
 
-İstemcinizin MCP konfigürasyonuna `command: "python"` ve `args: ["server.py yolu"]` ekleyin.
+> **Önerilen kurulum yolu:** `C:\SiberSelma\` (Türkçe karakter içeren yollardan kaçının — JSON config'lerde encoding sorunları çıkar).
 
 ---
 
-## Kullanım
+## Kullanım Örnekleri
 
-SiberSelma tool'ları Claude Desktop, Gemini CLI veya herhangi bir MCP istemcisinde aynı şekilde çalışır.
-
-### Wiki'de Arama
+### Claude/Gemini İçinden
 
 ```
-@SiberSelma search_cyber_wiki "XSS"
-@SiberSelma search_cyber_wiki "SQL Injection bypass"
 @SiberSelma search_cyber_wiki "SSRF cloud metadata"
-```
-
-### Zafiyet Çözüm Planı
-
-```
 @SiberSelma get_remediation_plan "IDOR"
-@SiberSelma get_remediation_plan "CSRF"
+@SiberSelma check_security_headers "https://example.com"
+@SiberSelma find_exposed_secrets "C:\projeler\api"
+@SiberSelma generate_security_report "https://example.com" "C:\projeler\api"
 ```
 
-### Subdomain Keşfi
-
+Doğal dille:
 ```
-@SiberSelma find_subdomains "example.com"
-```
-
-### MITRE ATT&CK Teknik Arama
-
-```
-@SiberSelma get_attack_techniques "phishing"
+SiberSelma'yı kullanarak https://mysite.com için kapsamlı güvenlik raporu üret,
+proje dizini /home/user/mysite olsun.
 ```
 
----
+### Kapsamlı Rapor Çıktısı
 
-## 📋 Kapsamlı Güvenlik Raporu (generate_security_report)
-
-`generate_security_report` tüm SiberSelma tool'larını sırayla çalıştırarak tek bir kapsamlı rapor üretir. Rapor `security_report_YYYY-MM-DD.md` olarak proje dizinine kaydedilir.
-
-### Ne yapar?
-
-Tek bir komutla şu analizler otomatik çalışır:
-
-| Adım | Analiz | Detay |
-|------|--------|-------|
-| 1 | **Web Uygulama Analizi** | HTTP header, cookie, form, sunucu bilgi sızıntısı |
-| 2 | **Statik Kod Analizi (SAST)** | .py/.js/.ts dosyalarında 17 tehlikeli pattern |
-| 3 | **HTTP Güvenlik Header'ları** | 10 header kontrolü + güvenlik skoru |
-| 4 | **Bağımlılık CVE Analizi** | NVD API ile requirements.txt/package.json taraması |
-| 5 | **Hardcoded Secret Tarama** | API key, token, şifre, private key + .env kontrolü |
-
-Rapor sonunda **Kritik / Yüksek / Orta** seviye özet tablosu ve öncelikli düzeltme adımları yer alır.
-
-### Claude Desktop'ta Kullanım
-
-Claude Desktop'ta SiberSelma tool'ını doğal dille çağırabilirsiniz:
-
-```
-Benim web sitemin güvenlik raporunu çıkar.
-URL: https://example.com
-Proje dizini: C:\Users\kullanici\projeler\web-app
-```
-
-Veya doğrudan tool çağrısı:
-
-```
-@SiberSelma generate_security_report "https://example.com" "C:\Users\kullanici\projeler\web-app"
-```
-
-### Gemini CLI'da Kullanım
-
-Gemini CLI'da da aynı şekilde çalışır:
-
-```
-@SiberSelma generate_security_report "https://example.com" "/home/kullanici/projeler/web-app"
-```
-
-Veya doğal dille:
-
-```
-SiberSelma'yı kullanarak https://mysite.com sitesinin ve /home/user/mysite
-projesinin güvenlik raporunu oluştur.
-```
-
-### Örnek Rapor Çıktısı
+`generate_security_report` 5 analiz çalıştırır ve özet üretir:
 
 ```markdown
-# Güvenlik Raporu — 2026-05-06
-**Hedef URL:** https://example.com
-**Proje Dizini:** /home/user/myproject
-**Oluşturulma:** 2026-05-06 14:30
-
----
+# Güvenlik Raporu — 2026-05-09
 
 ## Özet
 | Seviye | Sayı |
 |--------|------|
 | 🔴 Kritik | 2 |
 | 🟠 Yüksek | 3 |
-| 🟡 Orta | 5 |
+| 🟡 Orta  | 5 |
 
 ### Öncelikli Düzeltme Adımları
 1. Hardcoded secret ve CVE bulunan bağımlılıkları acilen temizle
-2. SAST bulgularındaki yüksek riskli kod pattern'lerini düzelt
+2. SAST yüksek riskli pattern'leri düzelt
 3. Eksik HTTP güvenlik header'larını ekle
 
----
-
-## 1. Web Uygulama Analizi
-**HTTP Durum:** 200 OK
-### Güvenlik Header'ları
-**Eksik (5):** `Content-Security-Policy`, `Permissions-Policy`, ...
-
-## 2. Statik Kod Analizi (SAST)
-## SAST Tarama Sonucu — 6 bulgu, 23 dosya tarandı
-- **SQL_Injection** | `api/db.py:45` | SQL string formatting
-  `cursor.execute(f"SELECT * FROM users WHERE id={user_id}")`
-
-## 3. HTTP Güvenlik Header'ları
-**Güvenlik Skoru:** 40/100 (4/10 header mevcut)
-
-## 4. Bağımlılık CVE Analizi
-### flask — 3 CVE bulundu
-  - **CVE-2024-XXXXX** (CVSS: 7.5) — ...
-
-## 5. Hardcoded Secret Tarama
-### Bulunan Secret'lar (1)
-- **Hardcoded API key** | `config.py:12`
-  `api_key = "***REDACTED***"`
+## 1. Web Uygulama Analizi …
+## 2. Statik Kod Analizi (SAST) …
+## 3. HTTP Güvenlik Header'ları …
+## 4. Bağımlılık CVE Analizi …
+## 5. Hardcoded Secret Tarama …
 ```
 
-> **Not:** Rapor otomatik olarak `security_report_2026-05-06.md` olarak proje kök dizinine kaydedilir.
+Rapor `security_report_YYYY-MM-DD.md` olarak proje köküne kaydedilir. JSON sürümü için `output_format="json"`.
 
-### Diğer Tool Kullanım Örnekleri
+---
 
+## Sık Karşılaşılan Sorunlar
+
+### "No such file or directory" — Türkçe karakter
+
+JSON config dosyaları `ü/ç/ş` karakterlerini bozuk kodlayabilir. Repoyu `C:\SiberSelma\` gibi ASCII bir dizine taşıyın.
+
+### "Connection closed" / MCP error -32000
+
+Sunucu başladıktan hemen kapanıyor — genellikle paket eksikliği. Terminalde manuel çalıştırarak hatayı görün:
 ```bash
-# Tek bir sitenin header kontrolü
-@SiberSelma check_security_headers "https://example.com"
-
-# Proje kodunda secret tarama
-@SiberSelma find_exposed_secrets "C:\Users\kullanici\projeler\web-app"
-
-# Bağımlılıklarda bilinen CVE kontrolü
-@SiberSelma check_dependencies "C:\Users\kullanici\projeler\web-app\requirements.txt"
-
-# IP/domain tehdit kontrolü
-@SiberSelma check_threat "suspicious-domain.com"
-
-# E-posta veri ihlali kontrolü (HIBP_API_KEY gerekir)
-@SiberSelma check_breach "user@example.com"
-
-# Güncel siber güvenlik haberleri
-@SiberSelma fetch_security_news 5
-
-# Wayback Machine ile geçmiş analizi
-@SiberSelma check_history "https://example.com/.env"
+python server.py
 ```
+`ModuleNotFoundError` görürseniz `pip install -r requirements.txt`'i config'deki Python ile çalıştırın.
 
----
+### `wiki.db` yok / sonuç dönmüyor
 
-## 📊 Nasıl Çalışıyor?
+`wiki.db` `.gitignore`'da. İlk kurulumda ve wiki güncellemesi sonrası `python ingest.py` çalıştırın.
 
-### Genel Mimari
+### NVD CVE taraması yavaş
 
-```mermaid
-graph LR
-    A["docs/wiki/\n(737 .md dosya)"] -->|ingest.py| B["wiki.db\n(SQLite FTS5)"]
-    B -->|server.py| C["MCP Server"]
-    C -->|MCP Protocol| D["Claude / Gemini / Diğer"]
+API key'siz NVD limiti 30 sn'de 5 istek. `NVD_API_KEY` env tanımlandığında 50 req/30s'ye yükselir ve `check_dependencies` çok daha hızlı tamamlanır.
+
+### Self-signed sertifikalı pentest hedefi
+
+Default TLS doğrulaması açık. Pentest sırasında yanlış sertifikalı hedef için:
+```bash
+SIBERSELMA_INSECURE_TLS=1 python server.py --tool pentest --target=https://test.local
 ```
-
-SiberSelma üç aşamada çalışır:
-1. **İndeksleme** (`ingest.py`): Wiki dosyaları SQLite FTS5 ile indekslenir
-2. **Sunucu** (`server.py`): MCP protokolü üzerinden tool'ları sunar
-3. **İstemci** (Claude Desktop, Gemini CLI, vb.): AI asistan bu tool'ları sorgulanırken çağırır
-
----
-
-### Tool Workflow'ları
-
-#### 1️⃣ Arama Workflow (search_cyber_wiki)
-
-```mermaid
-graph LR
-    A["Sorgu: XSS"] -->|MCP Tool Call| B["search_cyber_wiki()"]
-    B -->|Tokenize + AND| C["tokens"]
-    C -->|SQL MATCH| D["SQLite FTS5"]
-    D -->|snippet| E["5 Best Match"]
-    E -->|JSON| F["Claude Response"]
-```
-
-**Adımlar:**
-- Kullanıcı soru sorar: *"@SiberSelma search_cyber_wiki 'XSS'"*
-- Query tokenize edilir: `"XSS"` → `['XSS']`
-- Önce AND ile aranır, sonuç yoksa OR fallback devreye girer
-- İlk 5 en uygun dosya snippet'i ile döndürülür
-- Claude yanıtını bu bilgiyle oluşturur
-
----
-
-#### 2️⃣ Çözüm Planı Workflow (get_remediation_plan)
-
-```mermaid
-graph LR
-    A["Zafiyet: IDOR"] -->|get_remediation_plan| B["search_cyber_wiki wrapper"]
-    B -->|IDOR cozum| C["Wiki Sorgu"]
-    C -->|Filtrele| D["Remediation Results"]
-    D -->|JSON| E["Claude Response"]
-```
-
-**Adımlar:**
-- `get_remediation_plan("IDOR")` çağrılır
-- Arka planda `search_cyber_wiki("IDOR çözüm")` tetiklenir
-- Wiki'den zafiyet çözüm planları getirilir
-- Claude bunu çözüm önerileriyle sunabilir
-
----
-
-#### 3️⃣ İndeksleme Workflow (ingest.py)
-
-```mermaid
-graph LR
-    A["docs/wiki/"] -->|Glob *.md| B["737 Dosya"]
-    B -->|Dedup| C["Yeni - Guncel - Silinen"]
-    C -->|DELETE+INSERT| D["wiki.db"]
-    D -->|FTS5 Index| E["Indexed and Ready"]
-```
-
-**Adımlar:**
-- `python ingest.py` çalıştırılır
-- `docs/wiki/` içindeki tüm `.md` dosyaları bulunur
-- Veritabanındaki mevcut kayıtlarla karşılaştırılır (deduplikasyon)
-- Yeni dosyalar eklenir, mevcut dosyalar güncellenir, silinmiş dosyalar kaldırılır
-- FTS5 otomatik olarak tokenize ve indeksler
-
----
-
-#### 4️⃣ Gelecek: Güvenlik Raporu Orchestrasyon
-
-```mermaid
-graph LR
-    A["search_cyber_wiki"] --> B["Core Knowledge Engine"]
-    C["analyze_project_vulnerabilities"] --> B
-    D["check_security_headers"] --> B
-    E["find_exposed_secrets"] --> B
-    B --> F["generate_security_report\n(Orchestrator)"]
-    F -->|Combined| G["security_report.md"]
-```
-
-Tüm tool'lar tek raporda birleştirilecek:
-- Kod zafiyetleri (SAST)
-- HTTP header kontrolleri
-- Sırlar/credential'lar
-- Wiki referansları
-- Bir `security_report_YYYY-MM-DD.md` üretilecek
-
----
-
-### FTS5 Arama Mekanizması
-
-SQLite FTS5 (Full-Text Search 5) tam metin araması yapar:
-
-| Kavram | Açıklama |
-|--------|----------|
-| **Tokenize** | "SQL Injection" → `["SQL", "Injection"]` |
-| **MATCH** | `wiki_search MATCH '"SQL" AND "Injection"'` |
-| **Rank** | En uygun sonuç ilk sırada |
-| **Snippet** | Sonuç metni etrafındaki 64 karakterlik kontekst |
-
----
-
-## Wiki Kaynakları
-
-`docs/wiki/` içinde şu kaynaklar indekslenmiştir:
-
-- **PayloadsAllTheThings** — 60+ zafiyet tipi için payload ve exploit örnekleri
-- **OWASP Cheat Sheets** — SQL Injection, XSS, CSRF ve daha fazlası için önleme rehberleri
-- **h4cker** — Web, bulut, AI güvenliği, red team, DFIR
-- **Awesome Asset Discovery** — Keşif ve OSINT araçları
-- **90 Days of Cybersecurity** — Temelden ileri seviyeye öğrenme yolu
-- **Awesome ML for Cybersecurity** — Siber güvenlikte makine öğrenmesi kaynakları
 
 ---
 
@@ -471,91 +299,59 @@ SQLite FTS5 (Full-Text Search 5) tam metin araması yapar:
 
 ```
 SiberSelma/
-├── server.py        # MCP sunucusu (FastMCP)
-├── ingest.py        # Wiki dosyalarını SQLite'a indeksler
-├── wiki.db          # FTS5 arama veritabanı (ingest.py ile oluşur, .gitignore'da)
-├── CLAUDE.md        # Proje durumu ve yapılacaklar (AI session rehberi)
+├── server.py               # MCP server + CLI (FastMCP)
+├── api_server.py           # HTTP API wrapper (Bearer auth + path whitelist)
+├── ingest.py               # Wiki → SQLite FTS5 indeksleyici
+├── wiki.db                 # FTS5 veritabanı (gitignored)
 ├── requirements.txt
-└── docs/
-    └── wiki/        # 737+ siber güvenlik markdown dosyası
-        ├── PayloadsAllTheThings/
-        ├── h4cker-master/
-        ├── cheatsheets/
-        └── ...
+├── setup.ps1               # Windows otomatik kurulum
+├── tests/
+│   └── test_patterns.py    # SAST + secret regex testleri
+├── docs/
+│   └── wiki/               # 737+ siber güvenlik markdown
+│       ├── PayloadsAllTheThings/
+│       ├── OWASP-CheatSheets/
+│       ├── news/           # fetch_security_news çıktıları
+│       └── ...
+├── .cache/                 # MITRE ATT&CK cache (gitignored)
+├── CLAUDE.md               # AI session rehberi
+├── CHANGELOG.md            # Sürüm notları
+├── rapor.md                # Açık bug/eksik checklist'i
+└── wiki_schema.md          # Wiki yazım kuralları
 ```
 
 ---
 
-## Sık Karşılaşılan Sorunlar
-
-### MCP sunucu bağlanamıyor / "No such file or directory"
-
-**Belirti:** Claude Desktop veya Gemini CLI loglarında şu hata görünür:
-```
-can't open file 'C:\Users\...\MasaÃ¼stÃ¼\SiberSelma\server.py': [Errno 2] No such file or directory
-```
-
-**Sebep:** `Masaüstü` gibi Türkçe karakter içeren bir dizinde kurulu olması. JSON config dosyası "ü" karakterini `Ã¼` olarak bozuk kodlar.
-
-**Çözüm:**
-1. Repoyu Türkçe karakter içermeyen bir yola taşı (örn. `C:\SiberSelma\`)
-2. Config dosyasını güncellenmiş yolla tekrar yaz
-3. İstemciyi yeniden başlat
-
----
-
-### "Connection closed" / "MCP error -32000"
-
-**Sebep:** MCP sunucu başladıktan hemen kapanıyor. Genellikle eksik paket hatası.
-
-**Teşhis:** Terminalde şunu çalıştır:
-```bash
-C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe server.py
-```
-Eğer `ModuleNotFoundError: No module named 'mcp'` görüyorsan, bağımlılıklar yüklenmemiş.
-
-**Çözüm:**
-```bash
-C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe -m pip install -r requirements.txt
-```
-
----
-
-### `python` komutu bulunamıyor
-
-Config'de `"command": "python"` yerine Python'un tam yolunu kullan:
-
-```
-# Windows — tam yolu bulmak için:
-where python
-
-# macOS/Linux
-which python3
-```
-
----
-
-### wiki.db yok / arama sonuç vermiyor
-
-`wiki.db` `.gitignore`'da olduğu için repoda bulunmaz. İlk kurulumda ve wiki güncellemelerinden sonra çalıştır:
+## Test & Geliştirme
 
 ```bash
+# Pattern testleri (19 test)
+python -m pytest tests/ -q
+
+# CLI ile her tool denemek
+python server.py --tool <name> --<arg>=<value>
+
+# HTTP API ile denemek
+python api_server.py
+curl "http://localhost:8765/wiki?q=XSS"
+```
+
+Açık iş kalemleri için [`rapor.md`](./rapor.md) ve sürüm notları için [`CHANGELOG.md`](./CHANGELOG.md).
+
+### Wiki Katkısı
+
+```bash
+# Yeni markdown dosyası ekle
+echo "# Yeni Konu..." > docs/wiki/yeni_konu.md
+
+# Yeniden indeksle
 python ingest.py
 ```
 
----
-
-## Katkı
-
-`docs/wiki/` klasörüne yeni `.md` dosyası ekleyip `python ingest.py` çalıştırman yeterli — Claude anında o bilgiye erişebilir.
-
-1. Bu repoyu fork'la
-2. `docs/wiki/` klasörüne yeni markdown dosyaları ekle
-3. `python ingest.py` ile yeniden indeksle
-4. Pull request gönder
+`wiki_schema.md`'deki yazım kurallarına uy: **Özet**, **Kütüphaneler**, **Bağlantılar** bölümleri ve `[[Index]]` formatlı linkler.
 
 ---
 
 ## Lisans
 
-MIT License
+MIT License — `LICENSE` dosyasına bakın.
