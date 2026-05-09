@@ -69,11 +69,25 @@ cheatsheets/    → OWASP cheat sheet koleksiyonu
 - [x] **RSS Otomasyonu** — `fetch_security_news(max_items)`: THN + BleepingComputer feed → `docs/wiki/news/` (2026-05-06)
 
 ### Yeni Wiki Kaynakları (Öncelik Sırasıyla)
-- [ ] **OWASP API Security Top 10** — `https://github.com/OWASP/API-Security` — REST/GraphQL API kullananlar için 10 kritik zafiyet
-- [ ] **OWASP Secure Coding Practices** — `https://github.com/OWASP/secure-coding-practices-quick-reference-guide` — `analyze_project_vulnerabilities` için referans
-- [ ] **Cloud Güvenliği** — `https://github.com/aquasecurity/cloudsploit` — AWS/GCP/Azure misconfiguration kontrolleri
-- [ ] **Docker Bench Security** — `https://github.com/docker/docker-bench-security` — Container deployment güvenliği
+- [x] **OWASP API Security Top 10** — özet+link dosyası (2026-05-09)
+- [x] **OWASP Secure Coding Practices** — özet+link dosyası (2026-05-09)
+- [x] **Cloud Güvenliği** (AWS/GCP/Azure) — özet+link dosyası (2026-05-09)
+- [x] **Docker Bench Security** — özet+link dosyası (2026-05-09)
+- [x] **OWASP LLM Top 10 (2025)** — özet+link dosyası (2026-05-10)
+- [x] **MITRE ATLAS** — özet+link dosyası, AML.T → OWASP LLM eşlemesi (2026-05-10)
 - [ ] **Kendi Türkçe notları** — Gerçek test deneyimlerini `docs/wiki/` altına Türkçe yaz, `ingest.py` ile indeksle
+
+### Faz 6 Tool'ları (2026-05-10)
+- [x] `check_email_auth(domain)` — SPF/DMARC/DKIM
+- [x] `check_tls(host)` — protokol/cipher/sertifika + eski TLS probe
+- [x] `check_subdomain_takeover(subdomain)` — CNAME + 16 servis fingerprint
+- [x] `check_cors(url)` — Origin yansıma + null + creds
+- [x] `analyze_llm_app(directory)` — OWASP LLM Top 10 desenleri
+
+### Uzun Vadeli (sonraki fazlar)
+- [ ] Active Directory tool seti (Kerberoast/AS-REP, BloodHound parser)
+- [ ] Mobile static analysis (APK/IPA)
+- [ ] Compliance mapping (ISO 27001 / KVKK / PCI-DSS kontrol madde eşleşmesi)
 
 ---
 

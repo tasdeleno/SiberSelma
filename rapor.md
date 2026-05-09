@@ -121,7 +121,29 @@
 
 **Tüm roadmap tamamlandı. ✅**
 
-İleriye yönelik fikirler (yeni iş kalemi olarak açılabilir):
+---
+
+## Faz 6 — Saldırı Yüzeyi & AI Genişletmeleri (2026-05-10)
+
+### Yeni Tool'lar (5)
+- [x] `check_email_auth(domain)` — SPF/DMARC/DKIM (yaygın selector) DNS taraması, +all/p=none gibi zayıflıklar tespiti (2026-05-10)
+- [x] `check_tls(host, port)` — aktif protokol/cipher, sertifika expiry/SAN, eski TLSv1/1.1 probe (2026-05-10)
+- [x] `check_subdomain_takeover(subdomain)` — CNAME zinciri + 16 servis fingerprint (GitHub Pages, Heroku, S3, Shopify, Fastly...) (2026-05-10)
+- [x] `check_cors(url)` — Origin yansıma + null Origin + subdomain spoof, credentials kombinasyonu kritikliği (2026-05-10)
+- [x] `analyze_llm_app(directory)` — OWASP LLM Top 10 desenleri: prompt injection, system prompt sızıntısı, eval/subprocess + LLM çıktısı, pickle/torch.load, sonsuz token döngüsü (2026-05-10)
+
+### Yeni Wiki Kaynakları (2)
+- [x] `OWASP_LLM_Top10.md` — 2025 listesi, hızlı kontrol checklist, tool/lib referansları (2026-05-10)
+- [x] `MITRE_ATLAS.md` — taktik kategorileri, sık AML.T#### → OWASP LLM eşlemesi (2026-05-10)
+
+### Bilinen Kalemler (uzun vadeli)
+- [ ] **Active Directory tool seti** — Kerberoast/AS-REP/BloodHound parser (Windows pentest pazarı)
+- [ ] **Mobile (Android/iOS APK/IPA) static analysis tool**
+- [ ] **Compliance mapping tool** — bulguları ISO 27001 / KVKK / PCI-DSS kontrol maddelerine bağla
+- [x] CLI çıktısında Windows cp1254 encoding hatası — `sys.stdout/stderr.reconfigure(encoding='utf-8')` `__main__` bloğuna eklendi (2026-05-10)
+- [x] `check_tls` eski TLS probe'unda `DeprecationWarning` — `warnings.catch_warnings()` ile bastırıldı (2026-05-10)
+
+İleriye yönelik diğer fikirler:
 - Otomatik wiki güncelleyici (CVE feed'inden günlük yeni dosya)
 - API server'a OpenAPI/Swagger UI
 - Grafana dashboard entegrasyonu (rapor metrikleri)

@@ -1542,6 +1542,495 @@ def auto_cve_scan_to_wiki(verbose: bool = False) -> dict:
     return {"new_cves": new_cve_count, "queried": queried, "skipped": False}
 
 
+# ==========================================================================
+# Hızlı saldırı yüzeyi tool'ları: email auth, TLS, subdomain takeover, CORS
+# ==========================================================================
+
+def _nslookup_txt(name: str, timeout: int = 6) -> list:
+    """nslookup ile TXT kayıtlarını döner. Boş liste = kayıt yok / hata."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nslookup", "-type=TXT", name],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    txt_records = []
+    for line in (out.stdout or "").splitlines():
+        m = re.search(r'text\s*=\s*"(.+)"', line) or re.search(r'"([^"]+)"', line)
+        if m:
+            val = m.group(1)
+            if val and "MS=" not in val[:4]:
+                txt_records.append(val)
+    return txt_records
+
+
+def _nslookup_cname(name: str, timeout: int = 6) -> list:
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["nslookup", "-type=CNAME", name],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    cnames = []
+    for line in (out.stdout or "").splitlines():
+        m = re.search(r'canonical name\s*=\s*([\w\.\-]+)', line)
+        if m:
+            cnames.append(m.group(1).rstrip("."))
+    return cnames
+
+
+@mcp.tool()
+def check_email_auth(domain: str) -> str:
+    """
+    Bir alan adının SPF, DMARC ve yaygın DKIM selector kayıtlarını DNS üzerinden kontrol eder.
+
+    Args:
+        domain: Kontrol edilecek alan adı (örn: "example.com")
+    """
+    domain = domain.strip().lower().lstrip(".")
+    out = [f"## E-posta Kimlik Doğrulama Raporu — {domain}\n"]
+    issues = []
+
+    # SPF
+    spf_records = [t for t in _nslookup_txt(domain) if t.lower().startswith("v=spf1")]
+    if not spf_records:
+        out.append("### SPF\n- ❌ SPF kaydı bulunamadı (spoofing riski).")
+        issues.append("SPF eksik")
+    else:
+        for spf in spf_records:
+            out.append(f"### SPF\n- ✅ `{spf}`")
+            if "+all" in spf:
+                out.append("  - ⚠️ `+all` mekanizması her sunucuya izin veriyor — kritik.")
+                issues.append("SPF +all")
+            elif "?all" in spf:
+                out.append("  - ⚠️ `?all` (neutral) — koruma zayıf.")
+                issues.append("SPF ?all")
+            elif "~all" in spf:
+                out.append("  - ℹ️ `~all` (softfail) — `-all` (hardfail) önerilir.")
+            elif "-all" in spf:
+                out.append("  - ✅ `-all` (hardfail) sertleştirilmiş.")
+        if len(spf_records) > 1:
+            out.append("- ⚠️ Birden fazla SPF kaydı RFC 7208 ihlali — birleştir.")
+            issues.append("Birden fazla SPF")
+
+    # DMARC
+    dmarc_records = [t for t in _nslookup_txt(f"_dmarc.{domain}") if t.lower().startswith("v=dmarc1")]
+    if not dmarc_records:
+        out.append("\n### DMARC\n- ❌ DMARC kaydı bulunamadı.")
+        issues.append("DMARC eksik")
+    else:
+        for d in dmarc_records:
+            out.append(f"\n### DMARC\n- ✅ `{d}`")
+            policy = re.search(r"p\s*=\s*(none|quarantine|reject)", d, re.I)
+            if policy:
+                p = policy.group(1).lower()
+                if p == "none":
+                    out.append("  - ⚠️ `p=none` sadece raporlama yapar, engellemez.")
+                    issues.append("DMARC p=none")
+                elif p == "quarantine":
+                    out.append("  - ℹ️ `p=quarantine` — `p=reject` daha güçlü.")
+                else:
+                    out.append("  - ✅ `p=reject` en sıkı politika.")
+            if "rua=" not in d.lower():
+                out.append("  - ℹ️ `rua=` raporlama adresi yok.")
+
+    # DKIM (yaygın selector'lar)
+    out.append("\n### DKIM (yaygın selector taraması)")
+    found_dkim = False
+    for sel in ("default", "google", "selector1", "selector2", "k1", "mail", "dkim", "s1", "s2"):
+        rec = [t for t in _nslookup_txt(f"{sel}._domainkey.{domain}") if "p=" in t.lower() or "v=dkim1" in t.lower()]
+        if rec:
+            found_dkim = True
+            out.append(f"- ✅ `{sel}._domainkey` — `{rec[0][:80]}...`")
+    if not found_dkim:
+        out.append("- ⚠️ Yaygın selector'larda DKIM bulunamadı (özel selector kullanılıyor olabilir).")
+        issues.append("DKIM tespit edilemedi")
+
+    out.append(f"\n### Özet\n- {len(issues)} sorun: {', '.join(issues) if issues else 'yok'}")
+    ref = search_cyber_wiki("SPF DMARC DKIM email spoofing")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+    return "\n".join(out)
+
+
+@mcp.tool()
+def check_tls(host: str, port: int = 443) -> str:
+    """
+    Bir host'un TLS protokol versiyonlarını, cipher'ını ve sertifikasını değerlendirir.
+
+    Args:
+        host: Hedef alan adı veya IP (örn: "example.com")
+        port: TLS portu (varsayılan 443)
+    """
+    import socket
+    from datetime import datetime, timezone
+
+    host = host.strip().lower().lstrip(".").replace("https://", "").split("/")[0]
+    out = [f"## TLS Değerlendirme Raporu — {host}:{port}\n"]
+    issues = []
+
+    # 1. Sertifika ve aktif cipher
+    cert = None
+    cipher = None
+    proto = None
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=8) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                cert = ssock.getpeercert()
+                cipher = ssock.cipher()
+                proto = ssock.version()
+    except Exception as e:
+        return f"Bağlantı hatası: {e}"
+
+    if proto:
+        out.append(f"### Aktif Bağlantı\n- Protokol: **{proto}**")
+        if proto in ("TLSv1", "TLSv1.1", "SSLv3", "SSLv2"):
+            out.append(f"  - ❌ {proto} eski/güvensiz.")
+            issues.append(f"{proto} aktif")
+        elif proto == "TLSv1.2":
+            out.append("  - ✅ TLS 1.2 kabul edilebilir, TLS 1.3 önerilir.")
+        elif proto == "TLSv1.3":
+            out.append("  - ✅ TLS 1.3 modern.")
+    if cipher:
+        out.append(f"- Cipher: `{cipher[0]}` ({cipher[2]} bit)")
+        weak_terms = ("RC4", "DES", "3DES", "MD5", "EXPORT", "NULL", "anon")
+        if any(w in cipher[0] for w in weak_terms):
+            out.append(f"  - ❌ Zayıf cipher tespit edildi.")
+            issues.append("Zayıf cipher")
+        if cipher[2] < 128:
+            out.append(f"  - ⚠️ {cipher[2]} bit anahtar yetersiz.")
+            issues.append("Anahtar < 128 bit")
+
+    # 2. Sertifika
+    if cert:
+        out.append("\n### Sertifika")
+        subject = dict(x[0] for x in cert.get("subject", []))
+        issuer = dict(x[0] for x in cert.get("issuer", []))
+        out.append(f"- CN: `{subject.get('commonName', '?')}`")
+        out.append(f"- Issuer: `{issuer.get('organizationName', issuer.get('commonName', '?'))}`")
+        not_after = cert.get("notAfter")
+        if not_after:
+            try:
+                exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+                days_left = (exp - datetime.now(timezone.utc)).days
+                if days_left < 0:
+                    out.append(f"- ❌ **Sertifika {-days_left} gün önce sona erdi.**")
+                    issues.append("Sertifika süresi dolmuş")
+                elif days_left < 14:
+                    out.append(f"- ⚠️ Sertifika {days_left} gün içinde sona erecek.")
+                    issues.append(f"Süre yakın ({days_left}g)")
+                else:
+                    out.append(f"- ✅ Geçerlilik: {days_left} gün")
+            except ValueError:
+                out.append(f"- Geçerlilik: {not_after}")
+        sans = [v for k, v in cert.get("subjectAltName", []) if k == "DNS"]
+        if sans:
+            out.append(f"- SAN ({len(sans)}): {', '.join(sans[:5])}{'...' if len(sans) > 5 else ''}")
+
+    # 3. Eski protokol probe (SSLv3/TLSv1.0/1.1)
+    out.append("\n### Eski Protokol Testi")
+    legacy_versions = []
+    if hasattr(ssl, "TLSVersion"):
+        import warnings
+        with warnings.catch_warnings():
+            # Eski TLS sürümlerini probe etmek için DeprecationWarning'ı bastırıyoruz.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            for label, ver in (("TLSv1", ssl.TLSVersion.TLSv1), ("TLSv1.1", ssl.TLSVersion.TLSv1_1)):
+                try:
+                    test_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    test_ctx.check_hostname = False
+                    test_ctx.verify_mode = ssl.CERT_NONE
+                    test_ctx.minimum_version = ver
+                    test_ctx.maximum_version = ver
+                    with socket.create_connection((host, port), timeout=5) as sock:
+                        with test_ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                            legacy_versions.append(ssock.version())
+                except Exception:
+                    pass
+    if legacy_versions:
+        for v in legacy_versions:
+            out.append(f"- ❌ `{v}` hâlâ kabul ediliyor.")
+            issues.append(f"{v} kabul ediliyor")
+    else:
+        out.append("- ✅ TLS 1.0/1.1 reddediliyor.")
+
+    out.append(f"\n### Özet\n- {len(issues)} sorun: {', '.join(issues) if issues else 'yok'}")
+    ref = search_cyber_wiki("TLS SSL cipher")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+    return "\n".join(out)
+
+
+# Subdomain takeover fingerprint'leri: (CNAME deseni, body imzası, servis adı)
+TAKEOVER_FINGERPRINTS = [
+    ("github.io", "There isn't a GitHub Pages site here", "GitHub Pages"),
+    ("herokuapp.com", "No such app", "Heroku"),
+    ("herokudns.com", "No such app", "Heroku"),
+    ("s3.amazonaws.com", "NoSuchBucket", "AWS S3"),
+    ("amazonaws.com", "The specified bucket does not exist", "AWS S3"),
+    ("shopify.com", "Sorry, this shop is currently unavailable", "Shopify"),
+    ("readme.io", "Project doesnt exist", "Readme.io"),
+    ("readthedocs.io", "unknown to Read the Docs", "Read the Docs"),
+    ("ghost.io", "The thing you were looking for is no longer here", "Ghost"),
+    ("tumblr.com", "Whatever you were looking for doesn't currently exist", "Tumblr"),
+    ("wordpress.com", "Do you want to register", "WordPress"),
+    ("zendesk.com", "Help Center Closed", "Zendesk"),
+    ("pantheonsite.io", "404 error unknown site", "Pantheon"),
+    ("surge.sh", "project not found", "Surge"),
+    ("bitbucket.io", "Repository not found", "Bitbucket"),
+    ("fastly.net", "Fastly error: unknown domain", "Fastly"),
+]
+
+
+@mcp.tool()
+def check_subdomain_takeover(subdomain: str) -> str:
+    """
+    Bir subdomain'i CNAME ve HTTP yanıt parmak iziyle takeover riski açısından kontrol eder.
+
+    Args:
+        subdomain: Hedef subdomain (örn: "blog.example.com")
+    """
+    subdomain = subdomain.strip().lower().lstrip(".").replace("https://", "").replace("http://", "").split("/")[0]
+    out = [f"## Subdomain Takeover Kontrolü — {subdomain}\n"]
+    issues = []
+
+    cnames = _nslookup_cname(subdomain)
+    if not cnames:
+        out.append("### CNAME\n- CNAME yok (doğrudan A/AAAA kaydı). Takeover riski düşük.")
+    else:
+        out.append(f"### CNAME Zinciri\n- {' → '.join(cnames)}")
+
+    # HTTP yanıtı al
+    body = ""
+    status = None
+    for scheme in ("https", "http"):
+        try:
+            req = urllib.request.Request(f"{scheme}://{subdomain}/", headers={"User-Agent": "SiberSelma/1.0"})
+            resp = urllib.request.urlopen(req, timeout=8, context=_ssl_ctx())
+            status = resp.status
+            body = resp.read(8192).decode("utf-8", errors="ignore")
+            break
+        except urllib.error.HTTPError as e:
+            status = e.code
+            try:
+                body = e.read(8192).decode("utf-8", errors="ignore")
+            except Exception:
+                body = ""
+            break
+        except Exception:
+            continue
+
+    if status is None:
+        out.append("\n### HTTP\n- ❌ Bağlantı kurulamadı (NXDOMAIN veya host kapalı).")
+        if cnames:
+            out.append("  - ⚠️ CNAME hedefi sahipsiz olabilir — manuel doğrulama önerilir.")
+            issues.append("HTTP kapalı + CNAME var")
+    else:
+        out.append(f"\n### HTTP\n- Status: {status}")
+
+    # Fingerprint eşleşmesi
+    matches = []
+    haystack_cname = " ".join(cnames).lower()
+    haystack_body = body.lower()
+    for cname_hint, body_sig, service in TAKEOVER_FINGERPRINTS:
+        cname_match = cname_hint in haystack_cname
+        body_match = body_sig.lower() in haystack_body
+        if cname_match and body_match:
+            matches.append(f"- ❌ **{service}** — CNAME ve body imzası eşleşti. KRİTİK takeover riski.")
+            issues.append(f"{service} takeover")
+        elif cname_match:
+            matches.append(f"- ⚠️ **{service}** — CNAME eşleşti, body imzası yok. Manuel kontrol et.")
+        elif body_match:
+            matches.append(f"- ⚠️ Body imzası **{service}** servisine işaret ediyor.")
+
+    if matches:
+        out.append("\n### Parmak İzi Eşleşmeleri")
+        out.extend(matches)
+    else:
+        out.append("\n### Parmak İzi\n- ✅ Bilinen takeover imzası bulunamadı.")
+
+    out.append(f"\n### Özet\n- {len(issues)} kritik sorun: {', '.join(issues) if issues else 'yok'}")
+    ref = search_cyber_wiki("subdomain takeover")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+    return "\n".join(out)
+
+
+@mcp.tool()
+def check_cors(url: str, evil_origin: str = "https://evil.example.com") -> str:
+    """
+    Bir URL'in CORS yapılandırmasını test eder: Origin yansıması, null Origin, credentials açık mı.
+
+    Args:
+        url: Test edilecek endpoint (örn: "https://api.example.com/me")
+        evil_origin: Test için kullanılacak yabancı Origin değeri.
+    """
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    out = [f"## CORS Yapılandırma Testi — {url}\n"]
+    issues = []
+    ctx = _ssl_ctx()
+
+    def _probe(origin):
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "SiberSelma/1.0",
+            "Origin": origin,
+        })
+        try:
+            resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+        except urllib.error.HTTPError as e:
+            resp = e
+        except Exception as e:
+            return None, str(e)
+        return dict(resp.headers), None
+
+    tests = [
+        ("Yansıtılan Origin", evil_origin),
+        ("Null Origin", "null"),
+        ("Subdomain spoof", f"https://{url.split('/')[2]}.evil.example.com"),
+    ]
+
+    for label, origin in tests:
+        headers, err = _probe(origin)
+        out.append(f"### {label} (`Origin: {origin}`)")
+        if err:
+            out.append(f"- Hata: {err}")
+            continue
+        aco = headers.get("Access-Control-Allow-Origin")
+        acc = headers.get("Access-Control-Allow-Credentials", "").lower()
+        if not aco:
+            out.append("- ✅ `Access-Control-Allow-Origin` yok.")
+            continue
+        out.append(f"- `Access-Control-Allow-Origin: {aco}`")
+        if acc == "true":
+            out.append(f"- `Access-Control-Allow-Credentials: true`")
+        if aco == "*":
+            if acc == "true":
+                out.append("  - ❌ `*` + credentials kombinasyonu — tarayıcı bloklayacak ama yapılandırma hatası.")
+                issues.append(f"{label}: wildcard+creds")
+            else:
+                out.append("  - ⚠️ Wildcard origin — kimliksiz API için kabul edilebilir.")
+        elif aco == origin:
+            if acc == "true":
+                out.append("  - ❌ **KRİTİK**: Yabancı Origin yansıtılıyor + credentials açık. Tam CORS bypass.")
+                issues.append(f"{label}: yansıma+creds")
+            else:
+                out.append("  - ⚠️ Yabancı Origin yansıtılıyor (credentials yok ama bilgi sızıntısı mümkün).")
+                issues.append(f"{label}: origin yansıması")
+        elif aco == "null":
+            if acc == "true":
+                out.append("  - ❌ `null` Origin + credentials — sandboxed iframe ile sömürülebilir.")
+                issues.append("null+creds")
+
+    out.append(f"\n### Özet\n- {len(issues)} sorun: {', '.join(issues) if issues else 'yok'}")
+    ref = search_cyber_wiki("CORS misconfiguration")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n{ref.split(chr(10))[0]}")
+    return "\n".join(out)
+
+
+# ==========================================================================
+# LLM/Agent uygulama analizi (OWASP LLM Top 10 + MITRE ATLAS referanslı)
+# ==========================================================================
+
+LLM_PATTERNS = [
+    # LLM05: Improper Output Handling — model çıktısının komut/kod olarak çalıştırılması
+    (r'\b(?:eval|exec)\s*\(\s*[^)]*(?:completion|response|message|llm|gpt|claude|answer|output)',
+     "LLM05", "Model çıktısı `eval/exec` içine geçiriliyor — RCE riski."),
+    (r'(?:subprocess\.(?:run|Popen|call|check_output)|os\.system|os\.popen)\s*\(\s*[^)]*(?:completion|response|message|llm|gpt|claude|answer|output)',
+     "LLM05", "Model çıktısı shell komutu olarak çalıştırılıyor — RCE riski."),
+    (r'(?:requests\.(?:get|post)|urllib\.request\.urlopen|fetch)\s*\(\s*[^)]*(?:completion|response|message|llm|gpt|claude|answer|output)',
+     "LLM05", "Model çıktısı doğrulanmadan HTTP isteğine konuyor — SSRF riski."),
+    # LLM03: Supply Chain — güvensiz model yükleme
+    (r'pickle\.loads?\s*\(',
+     "LLM03", "`pickle.load` ile arbitrary kod yüklenebilir — model dosyalarına dikkat."),
+    (r'torch\.load\s*\([^)]*(?!weights_only\s*=\s*True)',
+     "LLM03", "`torch.load` `weights_only=True` belirtilmemiş — backdoor model riski."),
+    (r'(?:joblib|cloudpickle)\.load',
+     "LLM03", "`joblib/cloudpickle.load` arbitrary kod yürütebilir."),
+    # LLM07: System Prompt Leakage — sırların system prompt'a koyulması
+    (r'(?:system_prompt|SYSTEM_PROMPT|system_message)\s*=\s*[fr]?["\'][^"\']*(?:API_KEY|SECRET|TOKEN|PASSWORD|sk-)',
+     "LLM07", "System prompt içine sır gömülmüş — kullanıcıya sızabilir."),
+    # LLM01: Prompt Injection — kullanıcı girdisinin sanitize edilmeden prompt'a katılması
+    (r'(?:system_prompt|system_message|messages)\s*=\s*f["\'][^"\']*\{(?:user_input|user_message|query|input)',
+     "LLM01", "Kullanıcı girdisi system/messages içine doğrudan f-string ile gömülüyor — prompt injection."),
+    # LLM06: Excessive Agency — onaysız tehlikeli tool ifadeleri
+    (r'@(?:tool|mcp\.tool|function_tool)[^\n]*\n[^\n]*def\s+\w*(?:delete|remove|drop|shutdown|destroy|wipe|exec|run_shell)',
+     "LLM06", "Yıkıcı isimli tool agent'a sınırsız yetki verebilir — onay/dry-run ekle."),
+    # LLM10: Unbounded Consumption — limitsiz token/iterasyon
+    (r'while\s+True\s*:[^\n]*\n(?:[^\n]*\n){0,5}[^\n]*(?:completion|chat\.create|messages\.create|generate)',
+     "LLM10", "Sonsuz döngü içinde model çağrısı — token/cüzdan tükenebilir."),
+]
+
+
+@mcp.tool()
+def analyze_llm_app(directory: str) -> str:
+    """
+    Bir LLM/agent uygulamasını OWASP LLM Top 10 desenlerine göre tarar:
+    prompt injection, system prompt sızıntısı, güvensiz model yükleme,
+    çıktı işleme RCE/SSRF, agent yetki suistimali.
+
+    Args:
+        directory: Taranacak proje dizininin tam yolu.
+    """
+    if not os.path.isdir(directory):
+        return f"Dizin bulunamadı: {directory}"
+
+    findings = []
+    scanned = 0
+    skip_segments = {".git", "__pycache__", "node_modules", "venv", ".venv", "env",
+                     "dist", "build", ".cache", "docs", "wiki", "cheatsheets", "tests"}
+
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in skip_segments]
+        for fname in files:
+            if not fname.endswith((".py", ".js", ".ts", ".tsx", ".jsx", ".mjs")):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            scanned += 1
+            for lineno, line in enumerate(content.splitlines(), 1):
+                for regex, owasp_id, desc in LLM_PATTERNS:
+                    if re.search(regex, line, re.IGNORECASE):
+                        rel = os.path.relpath(fpath, directory)
+                        findings.append((owasp_id, rel, lineno, line.strip()[:120], desc))
+                        break
+
+    out = [f"## LLM Uygulama Analizi — {directory}\n",
+           f"Taranan dosya: {scanned}, bulgu: {len(findings)}\n"]
+
+    if not findings:
+        out.append("✅ LLM Top 10 desen kataloğunda eşleşme yok.")
+    else:
+        # OWASP ID'ye göre grupla
+        by_id = {}
+        for f_ in findings:
+            by_id.setdefault(f_[0], []).append(f_)
+        for owasp_id in sorted(by_id):
+            items = by_id[owasp_id]
+            out.append(f"### {owasp_id} ({len(items)} bulgu)")
+            for _, rel, lineno, snippet, desc in items[:20]:
+                out.append(f"- `{rel}:{lineno}` — {desc}")
+                out.append(f"  ```\n  {snippet}\n  ```")
+            if len(items) > 20:
+                out.append(f"- ...ve {len(items) - 20} daha")
+
+    ref = search_cyber_wiki("OWASP LLM prompt injection")
+    if "sonuç bulunamadı" not in ref:
+        out.append(f"\n### Wiki Referansı\n[[OWASP_LLM_Top10]] · [[MITRE_ATLAS]]")
+    return "\n".join(out)
+
+
 CLI_TOOLS = {
     "wiki": (search_cyber_wiki, ["query"]),
     "remediation": (get_remediation_plan, ["vulnerability_name"]),
@@ -1560,6 +2049,11 @@ CLI_TOOLS = {
     "attack": (get_attack_techniques, ["vulnerability"]),
     "breach": (check_breach, ["email"]),
     "news": (fetch_security_news, ["max_items"]),
+    "email-auth": (check_email_auth, ["domain"]),
+    "tls": (check_tls, ["host"]),
+    "takeover": (check_subdomain_takeover, ["subdomain"]),
+    "cors": (check_cors, ["url"]),
+    "llm": (analyze_llm_app, ["directory"]),
 }
 
 
@@ -1614,6 +2108,12 @@ def _run_cli(argv):
 if __name__ == "__main__":
     import sys
     import logging
+    # Windows konsolu (cp1254 vb.) emoji/Unicode'u encode edemediği için UTF-8'e zorla.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
