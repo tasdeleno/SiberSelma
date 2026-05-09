@@ -53,14 +53,15 @@ if (Test-Path $claudeConfigPath) {
             command = $pythonExe
             args    = @($serverPath)
         } -Force
-        $existing | ConvertTo-Json -Depth 5 | Set-Content $claudeConfigPath -Encoding UTF8
+        $json = $existing | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($claudeConfigPath, $json, [System.Text.UTF8Encoding]::new($false))
         Write-Host "[OK] Claude Desktop config guncellendi: $claudeConfigPath" -ForegroundColor Green
     } catch {
-        $configContent | Set-Content $claudeConfigPath -Encoding UTF8
+        [System.IO.File]::WriteAllText($claudeConfigPath, $configContent, [System.Text.UTF8Encoding]::new($false))
         Write-Host "[OK] Claude Desktop config yeniden olusturuldu: $claudeConfigPath" -ForegroundColor Green
     }
 } else {
-    $configContent | Set-Content $claudeConfigPath -Encoding UTF8
+    [System.IO.File]::WriteAllText($claudeConfigPath, $configContent, [System.Text.UTF8Encoding]::new($false))
     Write-Host "[OK] Claude Desktop config olusturuldu: $claudeConfigPath" -ForegroundColor Green
 }
 
@@ -82,14 +83,15 @@ if (Test-Path $geminiConfigPath) {
             command = $pythonExe
             args    = @($serverPath)
         } -Force
-        $existing | ConvertTo-Json -Depth 5 | Set-Content $geminiConfigPath -Encoding UTF8
+        $json = $existing | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($geminiConfigPath, $json, [System.Text.UTF8Encoding]::new($false))
         Write-Host "[OK] Gemini CLI config guncellendi: $geminiConfigPath" -ForegroundColor Green
     } catch {
-        $configContent | Set-Content $geminiConfigPath -Encoding UTF8
+        [System.IO.File]::WriteAllText($geminiConfigPath, $configContent, [System.Text.UTF8Encoding]::new($false))
         Write-Host "[OK] Gemini CLI config yeniden olusturuldu: $geminiConfigPath" -ForegroundColor Green
     }
 } else {
-    $configContent | Set-Content $geminiConfigPath -Encoding UTF8
+    [System.IO.File]::WriteAllText($geminiConfigPath, $configContent, [System.Text.UTF8Encoding]::new($false))
     Write-Host "[OK] Gemini CLI config olusturuldu: $geminiConfigPath" -ForegroundColor Green
 }
 
