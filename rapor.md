@@ -36,7 +36,7 @@
 - [x] **Logging yok** — `__main__` bloğu `logging` modülüne (stderr) geçti (2026-05-09)
 - [x] **Otomatik CVE → wiki** — `SIBERSELMA_AUTO_CVE_SCAN=1` ile arkaplan thread (2026-05-09)
 - [x] **Faz 5 wiki kaynakları** — OWASP API Top 10, Secure Coding, Cloud (AWS/GCP/Azure), Docker eklendi (2026-05-09)
-- [ ] **Hata mesajı dili tutarsız** — bazı modüller Türkçe karakterli, bazıları ASCII'ye düşmüş; düşük öncelik.
+- [x] **Hata mesajı dili tutarsız** — `başarısız`, `alınamadı`, `bulunamadı`, `keşfedildi`, `geçmişini`, `İlişkili`, `Ülke`, `İtibar`, `Uyarı`, `Lütfen`, `geçersiz`, `aşıldı` Türkçe karakterli hale getirildi (2026-05-09)
 - [x] **Rapor JSON çıktısı yok** — `generate_security_report(..., output_format="json")` eklendi (2026-05-09)
 - [x] **HIBP `Retry-After` header'ı okunmuyor** — 429'da Retry-After değeri raporlanıyor (2026-05-09)
 - [x] **GEMINI.md ve setup.ps1 README'de yok** — Gemini + setup.ps1 README'ye işlendi (2026-05-09)
@@ -113,8 +113,17 @@
 
 ## Kalan Yol Haritası (düşük öncelik)
 
-1. Hata mesajı dili tam standardizasyonu (Türkçe karakter / ASCII tutarlılığı)
-2. NVD ve Wayback için cache uygulaması (mimari hazır, sadece çağrı yerlerinde `_cache_get/_cache_set`)
-3. Web UI: tüm 17 tool'u kapsayacak şekilde genişletme (şu an 8 tool)
-4. CI workflow (GitHub Actions): `pytest` + `ingest.py` doğrulaması
-5. Docker image (`Dockerfile`) — multi-stage, distroless
+- [x] Hata mesajı dili tam standardizasyonu (2026-05-09)
+- [x] NVD + Wayback için cache uygulandı (2026-05-09)
+- [x] Web UI tüm 17 tool'u kapsıyor (2026-05-09)
+- [x] CI workflow (`.github/workflows/ci.yml`) — Python 3.11 & 3.12 matrix (2026-05-09)
+- [x] Dockerfile + `.dockerignore` — multi-stage, distroless nonroot (2026-05-09)
+
+**Tüm roadmap tamamlandı. ✅**
+
+İleriye yönelik fikirler (yeni iş kalemi olarak açılabilir):
+- Otomatik wiki güncelleyici (CVE feed'inden günlük yeni dosya)
+- API server'a OpenAPI/Swagger UI
+- Grafana dashboard entegrasyonu (rapor metrikleri)
+- Slack/Discord webhook desteği — kritik bulguda bildirim
+- Kapsamlı integration testleri (live API'leri mock'la)

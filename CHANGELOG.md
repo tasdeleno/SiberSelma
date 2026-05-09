@@ -4,6 +4,14 @@ Tüm önemli değişiklikler bu dosyada takip edilir. Format [Keep a Changelog](
 
 ## [Unreleased]
 
+### Altyapı
+- **NVD + Wayback HTTP cache** — `_cache_get/_cache_set` bütün dış API tool'larında aktif.
+- **Hata mesajı dili standardizasyonu** — Türkçe karakter kullanımı bütün dosyalarda tutarlı.
+- **Web UI tüm 17 tool** — `web_ui.py` bütün MCP tool'larını sergiliyor (int field desteği dahil).
+- **GitHub Actions CI** — `.github/workflows/ci.yml` Python 3.11 + 3.12 matrix; pytest + ingest smoke test.
+- **Dockerfile** — multi-stage build, distroless nonroot final image, 8765 + 8766 expose.
+- **`.dockerignore`** — venv, cache, tests, secret artefakt'lar.
+
 ### Eklendi
 - **CLI modu** — `python server.py --tool <name> --<arg>=<val>` ile MCP olmadan tool çağırma.
 - **JSON rapor çıktısı** — `generate_security_report(..., output_format="json")` ile yapılandırılmış çıktı.

@@ -621,46 +621,57 @@ def check_dependencies(file_path: str) -> str:
             pkg_name, pkg_ver = pkg_entry
         else:
             pkg_name, pkg_ver = pkg_entry, None
-        if idx > 0:
-            time.sleep(sleep_between)
-        try:
-            # CPE-based query (sürüm varsa) — keyword'den çok daha az false-positive üretir
-            if pkg_ver:
-                cpe = f"cpe:2.3:a:*:{pkg_name.lower()}:{pkg_ver}:*:*:*:*:*:*:*"
-                api_url = f"{NVD_API_URL}?cpeName={urllib.request.quote(cpe)}&resultsPerPage=5"
-            else:
-                # Sürüm yok → virtualMatchString ile ürün adına göre dene
-                vms = f"cpe:2.3:a:*:{pkg_name.lower()}:*:*:*:*:*:*:*:*"
-                api_url = f"{NVD_API_URL}?virtualMatchString={urllib.request.quote(vms)}&resultsPerPage=5"
 
-            headers = {"User-Agent": "SiberSelma/1.0"}
-            if nvd_key:
-                headers["apiKey"] = nvd_key
-            req = urllib.request.Request(api_url, headers=headers)
-            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-            data = json.loads(resp.read().decode("utf-8"))
-            checked += 1
+        cache_key = f"{pkg_name.lower()}@{pkg_ver or '*'}"
+        cached = _cache_get("nvd", cache_key)
+        if cached:
+            try:
+                data = json.loads(cached)
+                checked += 1
+            except Exception:
+                cached = None
 
-            total = data.get("totalResults", 0)
-            label = f"{pkg_name}=={pkg_ver}" if pkg_ver else pkg_name
-            if total > 0:
-                vuln_count += 1
-                out.append(f"\n### {label} — {total} CVE bulundu")
-                for vuln in data.get("vulnerabilities", [])[:3]:
-                    cve = vuln.get("cve", {})
-                    cve_id = cve.get("id", "?")
-                    desc_list = cve.get("descriptions", [])
-                    desc = next((d["value"] for d in desc_list if d.get("lang") == "en"), "")[:150]
-                    metrics = cve.get("metrics", {})
-                    score = "?"
-                    for metric_key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-                        if metric_key in metrics and metrics[metric_key]:
-                            score = metrics[metric_key][0].get("cvssData", {}).get("baseScore", "?")
-                            break
-                    out.append(f"  - **{cve_id}** (CVSS: {score}) — {desc}")
-        except Exception:
-            errors += 1
-            continue
+        if not cached:
+            if idx > 0:
+                time.sleep(sleep_between)
+            try:
+                if pkg_ver:
+                    cpe = f"cpe:2.3:a:*:{pkg_name.lower()}:{pkg_ver}:*:*:*:*:*:*:*"
+                    api_url = f"{NVD_API_URL}?cpeName={urllib.request.quote(cpe)}&resultsPerPage=5"
+                else:
+                    vms = f"cpe:2.3:a:*:{pkg_name.lower()}:*:*:*:*:*:*:*:*"
+                    api_url = f"{NVD_API_URL}?virtualMatchString={urllib.request.quote(vms)}&resultsPerPage=5"
+
+                headers = {"User-Agent": "SiberSelma/1.0"}
+                if nvd_key:
+                    headers["apiKey"] = nvd_key
+                req = urllib.request.Request(api_url, headers=headers)
+                resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+                raw = resp.read().decode("utf-8")
+                data = json.loads(raw)
+                _cache_set("nvd", cache_key, raw)
+                checked += 1
+            except Exception:
+                errors += 1
+                continue
+
+        total = data.get("totalResults", 0)
+        label = f"{pkg_name}=={pkg_ver}" if pkg_ver else pkg_name
+        if total > 0:
+            vuln_count += 1
+            out.append(f"\n### {label} — {total} CVE bulundu")
+            for vuln in data.get("vulnerabilities", [])[:3]:
+                cve = vuln.get("cve", {})
+                cve_id = cve.get("id", "?")
+                desc_list = cve.get("descriptions", [])
+                desc = next((d["value"] for d in desc_list if d.get("lang") == "en"), "")[:150]
+                metrics = cve.get("metrics", {})
+                score = "?"
+                for metric_key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+                    if metric_key in metrics and metrics[metric_key]:
+                        score = metrics[metric_key][0].get("cvssData", {}).get("baseScore", "?")
+                        break
+                out.append(f"  - **{cve_id}** (CVSS: {score}) — {desc}")
 
     summary = f"\n---\n**Özet:** {checked}/{len(packages[:20])} paket kontrol edildi, {vuln_count} pakette CVE bulundu"
     if errors:
@@ -860,7 +871,7 @@ def find_subdomains(domain: str) -> str:
             data = json.loads(raw)
             _cache_set("crtsh", domain, raw)
         except Exception as e:
-            return f"crt.sh sorgusu basarisiz: {e}"
+            return f"crt.sh sorgusu başarısız: {e}"
 
     subdomains = set()
     for entry in data:
@@ -871,17 +882,17 @@ def find_subdomains(domain: str) -> str:
                 subdomains.add(sub)
 
     if not subdomains:
-        return f"'{domain}' icin subdomain bulunamadi."
+        return f"'{domain}' icin subdomain bulunamadı."
 
     sorted_subs = sorted(subdomains)
-    out = [f"## Subdomain Kesfedildi — {domain} ({len(sorted_subs)} adet)\n"]
+    out = [f"## Subdomain Keşfedildi — {domain} ({len(sorted_subs)} adet)\n"]
     for s in sorted_subs[:50]:
         out.append(f"  - `{s}`")
     if len(sorted_subs) > 50:
         out.append(f"\n... ve {len(sorted_subs) - 50} subdomain daha.")
 
     ref = search_cyber_wiki("subdomain enumeration OSINT")
-    if "sonuc bulunamadi" not in ref:
+    if "sonuc bulunamadı" not in ref:
         out.append(f"\n### Wiki Referansi\n{ref.split(chr(10))[0]}")
 
     return "\n".join(out)
@@ -901,18 +912,28 @@ def check_history(url: str) -> str:
     api_url = f"https://archive.org/wayback/available?url={urllib.request.quote(url, safe=':/')}"
     ctx = _ssl_ctx()
 
-    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-        data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        return f"Wayback Machine sorgusu basarisiz: {e}"
+    cached = _cache_get("wayback", url)
+    if cached:
+        try:
+            data = json.loads(cached)
+        except Exception:
+            cached = None
+
+    if not cached:
+        req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
+            _cache_set("wayback", url, raw)
+        except Exception as e:
+            return f"Wayback Machine sorgusu başarısız: {e}"
 
     snapshot = data.get("archived_snapshots", {}).get("closest", {})
     out = [f"## Wayback Machine — {url}\n"]
 
     if not snapshot or not snapshot.get("available"):
-        out.append("Bu URL icin arsiv kaydı bulunamadi.")
+        out.append("Bu URL icin arsiv kaydı bulunamadı.")
     else:
         ts = snapshot.get("timestamp", "")
         archive_url = snapshot.get("url", "")
@@ -934,18 +955,30 @@ def check_history(url: str) -> str:
     found_paths = []
 
     for path in common_sensitive:
-        check_url = f"https://archive.org/wayback/available?url={urllib.request.quote(base_domain + '/' + path, safe=':/')}"
-        try:
-            r = urllib.request.urlopen(
-                urllib.request.Request(check_url, headers={"User-Agent": "SiberSelma/1.0"}),
-                timeout=8, context=ctx
-            )
-            d = json.loads(r.read().decode("utf-8"))
-            snap = d.get("archived_snapshots", {}).get("closest", {})
-            if snap.get("available"):
-                found_paths.append((path, snap.get("url", "")))
-        except Exception:
-            continue
+        full = base_domain + "/" + path
+        cached = _cache_get("wayback", full)
+        if cached:
+            try:
+                d = json.loads(cached)
+            except Exception:
+                cached = None
+
+        if not cached:
+            check_url = f"https://archive.org/wayback/available?url={urllib.request.quote(full, safe=':/')}"
+            try:
+                r = urllib.request.urlopen(
+                    urllib.request.Request(check_url, headers={"User-Agent": "SiberSelma/1.0"}),
+                    timeout=8, context=ctx
+                )
+                raw = r.read().decode("utf-8")
+                d = json.loads(raw)
+                _cache_set("wayback", full, raw)
+            except Exception:
+                continue
+
+        snap = d.get("archived_snapshots", {}).get("closest", {})
+        if snap.get("available"):
+            found_paths.append((path, snap.get("url", "")))
 
     if found_paths:
         out.append(f"\n### Arsivde Bulunan Hassas Yollar ({len(found_paths)})")
@@ -971,7 +1004,7 @@ def run_nuclei_scan(target: str, severity: str = "medium,high,critical", timeout
 
     if not shutil.which("nuclei"):
         return (
-            "nuclei bulunamadi. Kurulum:\n"
+            "nuclei bulunamadı. Kurulum:\n"
             "  go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest\n"
             "  veya: https://github.com/projectdiscovery/nuclei/releases"
         )
@@ -1002,7 +1035,7 @@ def run_nuclei_scan(target: str, severity: str = "medium,high,critical", timeout
 
     out = [f"## Nuclei Tarama — {target}\n"]
     if not findings:
-        out.append("Hicbir bulgu yok.")
+        out.append("Hiçbir bulgu yok.")
         if proc.returncode != 0 and proc.stderr:
             out.append(f"\nstderr: {proc.stderr[:500]}")
         return "\n".join(out)
@@ -1057,11 +1090,11 @@ def run_zap_baseline(target: str, zap_url: str = "http://localhost:8080") -> str
         resp = urllib.request.urlopen(req, timeout=15, context=ctx)
         data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        return f"ZAP alerts alinamadi: {e}"
+        return f"ZAP alerts alınamadı: {e}"
 
     alerts = data.get("alerts", [])
     if not alerts:
-        return f"## ZAP Baseline — {target}\n\nHicbir uyari yok."
+        return f"## ZAP Baseline — {target}\n\nHiçbir uyari yok."
 
     by_risk = {}
     for a in alerts:
@@ -1082,7 +1115,7 @@ def run_zap_baseline(target: str, zap_url: str = "http://localhost:8080") -> str
 @mcp.tool()
 def batch_scan_attack_surface(domain: str, max_subdomains: int = 10) -> str:
     """
-    Bir domain'in subdomain'lerini kesfeder, her birini security header taramasindan gecirir
+    Bir domain'in subdomain'lerini keşfeder, her birini security header taramasindan gecirir
     ve toplu sonuc raporu uretir.
 
     Args:
@@ -1095,11 +1128,11 @@ def batch_scan_attack_surface(domain: str, max_subdomains: int = 10) -> str:
     # find_subdomains ciktisindan subdomain'leri cikar
     found = re.findall(r'`([a-zA-Z0-9\.\-]+\.' + re.escape(domain) + r')`', sub_result)
     if not found:
-        return f"## Toplu Saldiri Yuzeyi Taramasi — {domain}\n\nSubdomain bulunamadi.\n\n{sub_result}"
+        return f"## Toplu Saldırı Yüzeyi Taramasi — {domain}\n\nSubdomain bulunamadı.\n\n{sub_result}"
 
     targets = list(dict.fromkeys(found))[:max_subdomains]
 
-    out = [f"## Toplu Saldiri Yuzeyi Taramasi — {domain}\n"]
+    out = [f"## Toplu Saldırı Yüzeyi Taramasi — {domain}\n"]
     out.append(f"**Kesfedilen subdomain:** {len(found)} (header taramasi: {len(targets)})\n")
 
     summary_rows = []
@@ -1134,7 +1167,7 @@ def batch_scan_attack_surface(domain: str, max_subdomains: int = 10) -> str:
 @mcp.tool()
 def check_threat(target: str) -> str:
     """
-    AlienVault OTX API ile bir IP adresi veya domain'in tehdit gecmisini sorgular.
+    AlienVault OTX API ile bir IP adresi veya domain'in tehdit geçmişini sorgular.
 
     Args:
         target: Sorgulanacak IP adresi veya domain (örn: "8.8.8.8" veya "example.com")
@@ -1171,12 +1204,12 @@ def check_threat(target: str) -> str:
         _cache_set("otx", target, raw)
     except urllib.error.HTTPError as e:
         if e.code == 401:
-            return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam degiskeni olarak tanimlayin."
+            return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam değişkeni olarak tanımlayın."
         if e.code == 403:
-            return "OTX erisimi reddedildi. ALIENVAULT_OTX_KEY gecersiz olabilir."
-        return f"OTX sorgusu basarisiz: HTTP {e.code}"
+            return "OTX erişimi reddedildi. ALIENVAULT_OTX_KEY geçersiz olabilir."
+        return f"OTX sorgusu başarısız: HTTP {e.code}"
     except Exception as e:
-        return f"OTX sorgusu basarisiz: {e}"
+        return f"OTX sorgusu başarısız: {e}"
 
     return _format_otx_report(target, data)
 
@@ -1189,24 +1222,24 @@ def _format_otx_report(target: str, data: dict) -> str:
     country = data.get("country_name", "Bilinmiyor")
     asn = data.get("asn", "")
 
-    out.append(f"**Ulke:** {country}  ")
+    out.append(f"**Ülke:** {country}  ")
     out.append(f"**ASN:** {asn}  ")
-    out.append(f"**Itibar Skoru:** {reputation}  ")
+    out.append(f"**İtibar Skoru:** {reputation}  ")
     out.append(f"**Tehdit Pulse Sayisi:** {pulse_count}\n")
 
     if pulse_count > 0:
-        out.append("**Uyari:** Bu hedef tehdit istihbarat veri tabanlarinda yer aliyor!")
+        out.append("**Uyarı:** Bu hedef tehdit istihbarat veri tabanlarinda yer aliyor!")
         pulses = data.get("pulse_info", {}).get("pulses", [])[:5]
         if pulses:
             out.append("\n### Ilgili Tehdit Pulse'lari")
             for p in pulses:
                 out.append(f"  - {p.get('name', '?')} ({p.get('created', '')[:10]})")
     else:
-        out.append("Bilinen tehdit kaydi bulunamadi.")
+        out.append("Bilinen tehdit kaydi bulunamadı.")
 
     malware = data.get("malware", [])
     if malware:
-        out.append(f"\n**Iliskili Malware:** {len(malware)} kayit")
+        out.append(f"\n**İlişkili Malware:** {len(malware)} kayit")
 
     return "\n".join(out)
 
@@ -1249,7 +1282,7 @@ def get_attack_techniques(vulnerability: str) -> str:
             except OSError:
                 pass
         except Exception as e:
-            return f"MITRE ATT&CK verisi alinamadi: {e}"
+            return f"MITRE ATT&CK verisi alınamadı: {e}"
 
     query = vulnerability.lower()
     matches = []
@@ -1271,7 +1304,7 @@ def get_attack_techniques(vulnerability: str) -> str:
             })
 
     if not matches:
-        return f"'{vulnerability}' icin MITRE ATT&CK'te teknik bulunamadi."
+        return f"'{vulnerability}' icin MITRE ATT&CK'te teknik bulunamadı."
 
     out = [f"## MITRE ATT&CK Teknikleri — '{vulnerability}' ({len(matches)} eslesme)\n"]
     for m in matches[:10]:
@@ -1281,7 +1314,7 @@ def get_attack_techniques(vulnerability: str) -> str:
         out.append(f"{m['desc']}...\n")
 
     ref = search_cyber_wiki(vulnerability)
-    if "sonuc bulunamadi" not in ref:
+    if "sonuc bulunamadı" not in ref:
         out.append(f"### Wiki Referansi\n{ref.split(chr(10))[0]}")
 
     return "\n".join(out)
@@ -1291,7 +1324,7 @@ def get_attack_techniques(vulnerability: str) -> str:
 def check_breach(email: str) -> str:
     """
     Have I Been Pwned API ile bir e-posta adresinin veri ihlallerinde gorünüp gorunmedigini sorgular.
-    HIBP_API_KEY ortam degiskeni gereklidir.
+    HIBP_API_KEY ortam değişkeni gereklidir.
 
     Args:
         email: Sorgulanacak e-posta adresi
@@ -1299,9 +1332,9 @@ def check_breach(email: str) -> str:
     api_key = os.environ.get("HIBP_API_KEY", "")
     if not api_key:
         return (
-            "Have I Been Pwned API key bulunamadi.\n"
-            "Lutfen HIBP_API_KEY ortam degiskenini tanimlayin:\n"
-            "  https://haveibeenpwned.com/API/Key adresinden ucretsiz key alin."
+            "Have I Been Pwned API key bulunamadı.\n"
+            "Lütfen HIBP_API_KEY ortam değişkenini tanımlayın:\n"
+            "  https://haveibeenpwned.com/API/Key adresinden ücretsiz key alin."
         )
 
     encoded = urllib.request.quote(email)
@@ -1318,15 +1351,15 @@ def check_breach(email: str) -> str:
         data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return f"'{email}' bilinen veri ihlallerinde bulunamadi."
+            return f"'{email}' bilinen veri ihlallerinde bulunamadı."
         if e.code == 401:
             return "Gecersiz HIBP API key."
         if e.code == 429:
             retry_after = e.headers.get("Retry-After", "?") if hasattr(e, "headers") else "?"
-            return f"HIBP rate limit asıldı. Retry-After: {retry_after} sn."
-        return f"HIBP sorgusu basarisiz: HTTP {e.code}"
+            return f"HIBP rate limit aşıldı. Retry-After: {retry_after} sn."
+        return f"HIBP sorgusu başarısız: HTTP {e.code}"
     except Exception as e:
-        return f"HIBP sorgusu basarisiz: {e}"
+        return f"HIBP sorgusu başarısız: {e}"
 
     out = [f"## Have I Been Pwned — {email}\n"]
     out.append(f"**{len(data)} veri ihlalinde bulundu!**\n")
@@ -1342,7 +1375,7 @@ def check_breach(email: str) -> str:
         out.append(f"  - Ele gecen veri: {data_classes}\n")
 
     ref = search_cyber_wiki("credential stuffing breach")
-    if "sonuc bulunamadi" not in ref:
+    if "sonuc bulunamadı" not in ref:
         out.append(f"### Wiki Referansi\n{ref.split(chr(10))[0]}")
 
     return "\n".join(out)
@@ -1377,7 +1410,7 @@ def fetch_security_news(max_items: int = 10) -> str:
         try:
             parsed_feed = feedparser.parse(feed_url, agent="SiberSelma/1.0")
         except Exception as e:
-            out.append(f"Feed alinamadi: {e}\n")
+            out.append(f"Feed alınamadı: {e}\n")
             continue
 
         if parsed_feed.bozo and not parsed_feed.entries:

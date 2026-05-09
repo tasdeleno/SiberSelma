@@ -10,29 +10,48 @@ import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from server import (
-    BASE_DIR,
     search_cyber_wiki,
+    get_remediation_plan,
+    analyze_project_vulnerabilities,
     run_basic_pentest,
     check_security_headers,
+    find_exposed_secrets,
+    check_dependencies,
+    generate_security_report,
     find_subdomains,
+    batch_scan_attack_surface,
+    run_nuclei_scan,
+    run_zap_baseline,
+    check_history,
     check_threat,
     get_attack_techniques,
-    batch_scan_attack_surface,
-    generate_security_report,
+    check_breach,
+    fetch_security_news,
 )
 
 PORT = 8766
 
 TOOLS = {
-    "wiki":       (search_cyber_wiki,           [("query", "Sorgu")]),
-    "pentest":    (run_basic_pentest,           [("target", "URL")]),
-    "headers":    (check_security_headers,      [("url", "URL")]),
-    "subdomains": (find_subdomains,             [("domain", "Domain")]),
-    "threat":     (check_threat,                [("target", "IP / Domain")]),
-    "attack":     (get_attack_techniques,       [("vulnerability", "Zafiyet")]),
-    "batch":      (batch_scan_attack_surface,   [("domain", "Domain")]),
-    "report":     (generate_security_report,    [("url", "URL"), ("directory", "Dizin")]),
+    "wiki":        (search_cyber_wiki,                [("query", "Sorgu")]),
+    "remediation": (get_remediation_plan,             [("vulnerability_name", "Zafiyet")]),
+    "sast":        (analyze_project_vulnerabilities,  [("directory_path", "Proje Dizini")]),
+    "pentest":     (run_basic_pentest,                [("target", "URL")]),
+    "headers":     (check_security_headers,           [("url", "URL")]),
+    "secrets":     (find_exposed_secrets,             [("directory", "Proje Dizini")]),
+    "deps":        (check_dependencies,               [("file_path", "requirements.txt / package.json")]),
+    "report":      (generate_security_report,         [("url", "URL"), ("directory", "Proje Dizini")]),
+    "subdomains":  (find_subdomains,                  [("domain", "Domain")]),
+    "batch":       (batch_scan_attack_surface,        [("domain", "Domain")]),
+    "nuclei":      (run_nuclei_scan,                  [("target", "URL")]),
+    "zap":         (run_zap_baseline,                 [("target", "URL")]),
+    "history":     (check_history,                    [("url", "URL")]),
+    "threat":      (check_threat,                     [("target", "IP / Domain")]),
+    "attack":      (get_attack_techniques,            [("vulnerability", "Zafiyet")]),
+    "breach":      (check_breach,                     [("email", "E-posta")]),
+    "news":        (fetch_security_news,              [("max_items", "Haber Sayısı (sayı)")]),
 }
+
+INT_FIELDS = {"max_items"}
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="tr">
@@ -116,7 +135,15 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(400, "unknown tool")
             return
         func, expected = TOOLS[tool_name]
-        kwargs = {k: params.get(k, "") for k, _ in expected}
+        kwargs = {}
+        for k, _ in expected:
+            v = params.get(k, "")
+            if k in INT_FIELDS:
+                try:
+                    v = int(v) if v else 10
+                except ValueError:
+                    v = 10
+            kwargs[k] = v
         try:
             result = func(**kwargs)
         except Exception as e:
