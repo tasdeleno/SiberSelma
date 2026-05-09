@@ -8,6 +8,13 @@ Tüm önemli değişiklikler bu dosyada takip edilir. Format [Keep a Changelog](
 - **CLI modu** — `python server.py --tool <name> --<arg>=<val>` ile MCP olmadan tool çağırma.
 - **JSON rapor çıktısı** — `generate_security_report(..., output_format="json")` ile yapılandırılmış çıktı.
 - **NVD CPE-based sorgu** — `keywordSearch` yerine `cpeName` / `virtualMatchString`; paket sürümü `==1.2.3`'ten parse edilip CVE eşleşmesinde kullanılıyor.
+- **HTTP cache layer** — SQLite tabanlı 24h TTL cache (OTX, crt.sh için aktif). `.cache/http_cache.db`.
+- **`batch_scan_attack_surface`** tool'u — Subdomain keşfi + her birine güvenlik header taraması, zayıf skorları öne çıkarır.
+- **`run_nuclei_scan`** tool'u — Lokal nuclei çalıştırır, JSONL parse, severity gruplaması.
+- **`run_zap_baseline`** tool'u — OWASP ZAP daemon API'sini kullanarak baseline tarama.
+- **Otomatik CVE → wiki** — `SIBERSELMA_AUTO_CVE_SCAN=1` env ile server başlangıcında `requirements.txt` NVD'ye sorulur, ilk kez görülen CVE'ler `docs/wiki/cve/CVE-XXXX-YYYYY.md` olarak yazılır (arkaplan thread).
+- **Web UI** — `python web_ui.py` ile `http://localhost:8766` üzerinden minimalist arayüz.
+- **Faz 5 wiki kaynakları** — `OWASP_API_Top10_2023.md`, `Secure_Coding_Practices.md`, `Cloud_Security_AWS_GCP_Azure.md`, `Docker_Container_Security.md`.
 
 ## [2026-05-09] — Bug temizleme & güvenlik sertleştirme
 

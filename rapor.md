@@ -34,9 +34,9 @@
 
 - [x] **Test klasörü yok** — `tests/test_patterns.py` eklendi, 19 test geçiyor (2026-05-09)
 - [x] **Logging yok** — `__main__` bloğu `logging` modülüne (stderr) geçti (2026-05-09)
-- [ ] **Otomatik CVE → wiki** — `server.py` her başladığında `requirements.txt`'i NVD'ye sorsun, yeni CVE'leri `docs/wiki/cve/CVE-XXXX-XXXXX.md` olarak yazsın.
-- [ ] **Faz 5 wiki kaynakları** — OWASP API Top 10, Secure Coding Practices, CloudSploit, Docker Bench eklenmemiş.
-- [ ] **Hata mesajı dili tutarsız** — bazı modüller Türkçe karakterli, bazıları ASCII'ye düşmüş; standartlaştır.
+- [x] **Otomatik CVE → wiki** — `SIBERSELMA_AUTO_CVE_SCAN=1` ile arkaplan thread (2026-05-09)
+- [x] **Faz 5 wiki kaynakları** — OWASP API Top 10, Secure Coding, Cloud (AWS/GCP/Azure), Docker eklendi (2026-05-09)
+- [ ] **Hata mesajı dili tutarsız** — bazı modüller Türkçe karakterli, bazıları ASCII'ye düşmüş; düşük öncelik.
 - [x] **Rapor JSON çıktısı yok** — `generate_security_report(..., output_format="json")` eklendi (2026-05-09)
 - [x] **HIBP `Retry-After` header'ı okunmuyor** — 429'da Retry-After değeri raporlanıyor (2026-05-09)
 - [x] **GEMINI.md ve setup.ps1 README'de yok** — Gemini + setup.ps1 README'ye işlendi (2026-05-09)
@@ -48,7 +48,7 @@
 
 ### Kalite
 - [x] **Pytest klasörü kur** — `tests/test_patterns.py` ile 19 test (2026-05-09)
-- [ ] **SQLite cache layer** — NVD, OTX, Wayback için 24h TTL (Kısmen: MITRE filesystem cache var)
+- [x] **SQLite cache layer** — `.cache/http_cache.db` 24h TTL; OTX + crt.sh aktif (2026-05-09)
 - [x] **CPE-based NVD sorgusu** — sürüm parse + `cpeName` query (2026-05-09)
 
 ### Güvenlik
@@ -58,9 +58,9 @@
 
 ### Yeni Özellikler
 - [x] **CLI modu** — `python server.py --tool <name> --<arg>=<val>` (2026-05-09)
-- [ ] **Toplu tarama tool'u** — `find_subdomains` çıktısını `check_security_headers`'a pipe eden batch.
-- [ ] **OWASP ZAP / Nuclei entegrasyonu** — `run_basic_pentest`'i gerçek tarayıcıyla besle.
-- [ ] **Web UI** — FastAPI + HTMX ile raporları tarayıcıda göster.
+- [x] **Toplu tarama tool'u** — `batch_scan_attack_surface(domain)` (2026-05-09)
+- [x] **OWASP ZAP / Nuclei entegrasyonu** — `run_nuclei_scan`, `run_zap_baseline` (2026-05-09)
+- [x] **Web UI** — `python web_ui.py` → `http://localhost:8766` (standart kütüphane, 8 tool) (2026-05-09)
 
 ### Repo Hijyeni
 - [x] **README'ye Gemini CLI + setup.ps1 + CLI + HTTP API + env tablosu** eklendi (2026-05-09)
@@ -111,12 +111,10 @@
 
 ---
 
-## Kalan Öncelikli Yol Haritası
+## Kalan Yol Haritası (düşük öncelik)
 
-1. **Otomatik CVE → wiki** (CLAUDE.md Faz 5)
-2. **Faz 5 wiki kaynakları** (OWASP API Top 10, Secure Coding Practices, CloudSploit, Docker Bench)
-3. **Hata mesajı dili standardizasyonu**
-4. **Toplu tarama tool'u** (`find_subdomains` → batch `check_security_headers`)
-5. **OWASP ZAP / Nuclei entegrasyonu**
-6. **Web UI** (FastAPI + HTMX)
-7. **NVD/OTX/Wayback için SQLite cache layer**
+1. Hata mesajı dili tam standardizasyonu (Türkçe karakter / ASCII tutarlılığı)
+2. NVD ve Wayback için cache uygulaması (mimari hazır, sadece çağrı yerlerinde `_cache_get/_cache_set`)
+3. Web UI: tüm 17 tool'u kapsayacak şekilde genişletme (şu an 8 tool)
+4. CI workflow (GitHub Actions): `pytest` + `ingest.py` doğrulaması
+5. Docker image (`Dockerfile`) — multi-stage, distroless
