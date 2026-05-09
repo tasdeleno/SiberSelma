@@ -43,3 +43,9 @@ KNOWLEDGE_GRAPH_SUMMARY.txt
 
 # Claude geçici dosyaları
 .claude/
+
+# Tool cache (MITRE, NVD vb.)
+.cache/
+
+# Otomatik üretilen güvenlik raporları
+security_report_*.md

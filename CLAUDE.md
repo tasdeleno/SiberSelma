@@ -1,6 +1,8 @@
 # SiberSelma — Proje Rehberi
 
-Bu dosya her session başında otomatik okunur. Projeye yeni başlarken önce bunu, sonra `docs/wiki/Index.md` ve `wiki_schema.md` dosyalarını oku.
+Bu dosya her session başında otomatik okunur. Projeye yeni başlarken önce bunu, sonra `rapor.md` (bug/eksik/geliştirme takibi), `docs/wiki/Index.md` ve `wiki_schema.md` dosyalarını oku.
+
+> **Önemli:** `rapor.md` projedeki açık bug, eksik ve geliştirme önerilerinin checklist'idir. Bir madde tamamlandığında `[ ]` → `[x]` yap, yanına tarihi ekle ve gerekirse CLAUDE.md "Yapılanlar/Yapılacaklar" bölümünü güncelle.
 
 ## Proje Nedir?
 
