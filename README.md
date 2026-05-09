@@ -39,19 +39,19 @@ git clone https://github.com/tasdeleno/SiberSelma.git
 cd SiberSelma
 ```
 
-### 2. Sanal Ortam Kur ve Bağımlılıkları Yükle
+### 2. Bağımlılıkları Yükle
+
+Config'de hangi `python.exe` yolunu kullanacaksanız, bağımlılıkları **o Python** ile kurun:
 
 ```bash
-python -m venv venv
-
-# Windows
-.\venv\Scripts\activate
+# Hangi python kullanacaksanız onunla kur (venv OLMADAN, global kurulum):
+C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe -m pip install -r requirements.txt
 
 # macOS / Linux
-source venv/bin/activate
-
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
+
+> **Önemli:** `pip install` yaptığınız Python ile config'deki `command` yolu aynı olmalı. Farklı Python sürümlerine kurulum yapılırsa MCP sunucu `ModuleNotFoundError` ile başlayamaz.
 
 ### 3. Wiki Dosyalarını İndeksle
 
@@ -501,6 +501,23 @@ can't open file 'C:\Users\...\MasaÃ¼stÃ¼\SiberSelma\server.py': [Errno 2] No
 1. Repoyu Türkçe karakter içermeyen bir yola taşı (örn. `C:\SiberSelma\`)
 2. Config dosyasını güncellenmiş yolla tekrar yaz
 3. İstemciyi yeniden başlat
+
+---
+
+### "Connection closed" / "MCP error -32000"
+
+**Sebep:** MCP sunucu başladıktan hemen kapanıyor. Genellikle eksik paket hatası.
+
+**Teşhis:** Terminalde şunu çalıştır:
+```bash
+C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe server.py
+```
+Eğer `ModuleNotFoundError: No module named 'mcp'` görüyorsan, bağımlılıklar yüklenmemiş.
+
+**Çözüm:**
+```bash
+C:\Users\kullanici\AppData\Local\Programs\Python\Python314\python.exe -m pip install -r requirements.txt
+```
 
 ---
 

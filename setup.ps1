@@ -8,12 +8,13 @@ $serverPath = "C:\SiberSelma\server.py"
 
 # Python varligini kontrol et
 if (-not (Test-Path $pythonExe)) {
+    # Python 313 veya diger surumler
     $found = Get-ChildItem "C:\Users\$env:USERNAME\AppData\Local\Programs\Python" -Filter "python.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($found) {
         $pythonExe = $found.FullName
         Write-Host "Python bulundu: $pythonExe"
     } else {
-        Write-Host "HATA: Python bulunamadi. Python yuklu oldugundan emin olun." -ForegroundColor Red
+        Write-Host "HATA: Python bulunamadi. Python yuklu olduğundan emin olun." -ForegroundColor Red
         exit 1
     }
 }
@@ -43,6 +44,7 @@ if (-not (Test-Path $claudeConfigDir)) {
     New-Item -ItemType Directory -Path $claudeConfigDir -Force | Out-Null
 }
 
+# Mevcut config varsa mcpServers ekle, yoksa yeni olustur
 if (Test-Path $claudeConfigPath) {
     try {
         $existing = Get-Content $claudeConfigPath -Raw | ConvertFrom-Json
@@ -97,4 +99,4 @@ if (Test-Path $geminiConfigPath) {
 
 Write-Host ""
 Write-Host "Kurulum tamamlandi!" -ForegroundColor Cyan
-Write-Host "Claude Desktop ve Gemini CLI'yi yeniden baslatin." -ForegroundColor Cyan
+Write-Host "Claude Desktop ve Gemini CLI'yi yeniden baslatın." -ForegroundColor Cyan
