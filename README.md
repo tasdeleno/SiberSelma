@@ -1,5 +1,8 @@
 # SiberSelma 🕵️‍♀️
 
+<img width="1081" height="2003" alt="Gemini_Generated_Image_ma4otyma4otyma4o" src="https://github.com/user-attachments/assets/1fbbe6d6-fe9d-4ace-9f3b-237ec0d77612" />
+
+
 **SiberSelma**, Claude / Gemini gibi yapay zeka asistanlarına siber güvenlik bilgisi ve yetenekleri kazandıran açık kaynaklı bir **MCP (Model Context Protocol)** sunucusudur.
 
 İki şey sağlar:
