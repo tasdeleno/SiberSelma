@@ -17,6 +17,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WIKI_DIR = os.path.join(BASE_DIR, "docs", "wiki")
 DB_PATH = os.path.join(BASE_DIR, "wiki.db")
 
+# TLS doğrulama: default AÇIK. SIBERSELMA_INSECURE_TLS=1 ile devre dışı bırakılabilir.
+# (Pentest sırasında self-signed sertifikalı hedefler için opt-out.)
+INSECURE_TLS = os.environ.get("SIBERSELMA_INSECURE_TLS", "0") == "1"
+
+
+def _ssl_ctx():
+    """TLS bağlamı oluşturur. INSECURE_TLS=1 ise doğrulama kapalı."""
+    ctx = ssl.create_default_context()
+    if INSECURE_TLS:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
 def ensure_wiki_dir():
     """Wiki klasörünün var olduğundan emin olur."""
     if not os.path.exists(WIKI_DIR):
@@ -116,7 +129,8 @@ def analyze_project_vulnerabilities(directory_path: str) -> str:
 
     for ext, patterns in DANGEROUS_PATTERNS.items():
         for filepath in glob.glob(os.path.join(directory_path, "**", f"*{ext}"), recursive=True):
-            if "node_modules" in filepath or ".venv" in filepath or "__pycache__" in filepath:
+            skip_markers = ("node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build")
+            if any(marker in filepath.split(os.sep) for marker in skip_markers):
                 continue
             scanned += 1
             try:
@@ -191,9 +205,7 @@ def run_basic_pentest(target: str) -> str:
     if not target.startswith(("http://", "https://")):
         target = "https://" + target
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
     cookie_jar = CookieJar()
     opener = urllib.request.build_opener(
@@ -247,10 +259,14 @@ def run_basic_pentest(target: str) -> str:
             flags = []
             if not ck.secure:
                 flags.append("Secure YOK")
-            if "httponly" not in str(ck).lower():
+            if not ck.has_nonstandard_attr("HttpOnly") and not ck.has_nonstandard_attr("httponly"):
                 flags.append("HttpOnly YOK")
+            samesite = ck._rest.get("SameSite") or ck._rest.get("samesite") if hasattr(ck, "_rest") else None
+            if not samesite:
+                flags.append("SameSite YOK")
             warning = f" ⚠ {', '.join(flags)}" if flags else ""
-            out.append(f"  - `{ck.name}={ck.value[:20]}...`{warning}")
+            value_preview = (ck.value or "")[:20]
+            out.append(f"  - `{ck.name}={value_preview}...`{warning}")
 
     # 4) Form tespiti
     forms = re.findall(r'<form[^>]*action=["\']([^"\']*)["\'][^>]*>', body, re.IGNORECASE)
@@ -315,9 +331,7 @@ def check_security_headers(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
     req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
     try:
@@ -371,6 +385,18 @@ def check_security_headers(url: str) -> str:
     return "\n".join(out)
 
 
+def _shannon_entropy(s: str) -> float:
+    """Bir string için Shannon entropy değerini hesaplar (bit/karakter)."""
+    if not s:
+        return 0.0
+    from math import log2
+    freq = {}
+    for ch in s:
+        freq[ch] = freq.get(ch, 0) + 1
+    n = len(s)
+    return -sum((c / n) * log2(c / n) for c in freq.values())
+
+
 SECRET_PATTERNS = [
     (r'(?:password|passwd|pwd)\s*[=:]\s*["\'][^"\']{3,}["\']', "Hardcoded password"),
     (r'(?:api_?key|apikey|api_?secret)\s*[=:]\s*["\'][^"\']{8,}["\']', "Hardcoded API key"),
@@ -419,13 +445,24 @@ def find_exposed_secrets(directory: str) -> str:
                 if line.strip().startswith("#") or line.strip().startswith("//"):
                     continue
                 for regex, label in SECRET_PATTERNS:
-                    if re.search(regex, line, re.IGNORECASE):
-                        findings.append({
-                            "file": os.path.relpath(filepath, directory),
-                            "line": line_no,
-                            "type": label,
-                            "snippet": re.sub(r'["\'][^"\']{4,}["\']', '"***REDACTED***"', line.strip()[:120]),
-                        })
+                    m = re.search(regex, line, re.IGNORECASE)
+                    if not m:
+                        continue
+                    # Tırnaklar arası değerin entropy'sini kontrol et — örnek/dummy'leri ele
+                    val_match = re.search(r'["\']([^"\']{4,})["\']', m.group(0))
+                    if val_match:
+                        val = val_match.group(1)
+                        # Çok düşük entropy = "password", "changeme", "your_key_here" gibi placeholder
+                        # Private key ve özel pattern'lerde bu kontrol atlanır
+                        if "PRIVATE KEY" not in label and "Database" not in label:
+                            if _shannon_entropy(val) < 2.5:
+                                continue
+                    findings.append({
+                        "file": os.path.relpath(filepath, directory),
+                        "line": line_no,
+                        "type": label,
+                        "snippet": re.sub(r'["\'][^"\']{4,}["\']', '"***REDACTED***"', line.strip()[:120]),
+                    })
 
     # .env git kontrolü
     env_warnings = []
@@ -511,19 +548,27 @@ def check_dependencies(file_path: str) -> str:
     if not packages:
         return "Dosyada bağımlılık bulunamadı."
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    import time
+    ctx = _ssl_ctx()
+
+    nvd_key = os.environ.get("NVD_API_KEY", "")
+    # NVD limiti: API key'siz 30 sn'de 5 istek; key ile 30 sn'de 50 istek.
+    sleep_between = 0.7 if nvd_key else 6.5
 
     out = [f"## Bağımlılık CVE Raporu — {len(packages)} paket kontrol ediliyor\n"]
     vuln_count = 0
     checked = 0
     errors = 0
 
-    for pkg in packages[:20]:
+    for idx, pkg in enumerate(packages[:20]):
+        if idx > 0:
+            time.sleep(sleep_between)
         try:
             api_url = f"{NVD_API_URL}?keywordSearch={urllib.request.quote(pkg)}&resultsPerPage=5"
-            req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+            headers = {"User-Agent": "SiberSelma/1.0"}
+            if nvd_key:
+                headers["apiKey"] = nvd_key
+            req = urllib.request.Request(api_url, headers=headers)
             resp = urllib.request.urlopen(req, timeout=15, context=ctx)
             data = json.loads(resp.read().decode("utf-8"))
             checked += 1
@@ -573,16 +618,17 @@ def generate_security_report(url: str, directory: str) -> str:
     date_str = datetime.now().strftime("%Y-%m-%d")
     report_path = os.path.join(BASE_DIR, f"security_report_{date_str}.md")
 
+    header_lines = []
     sections = []
     critical = 0
     high = 0
     medium = 0
 
-    sections.append(f"# Güvenlik Raporu — {date_str}")
-    sections.append(f"**Hedef URL:** {url}  ")
-    sections.append(f"**Proje Dizini:** {directory}  ")
-    sections.append(f"**Oluşturulma:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-    sections.append("---\n")
+    header_lines.append(f"# Güvenlik Raporu — {date_str}")
+    header_lines.append(f"**Hedef URL:** {url}  ")
+    header_lines.append(f"**Proje Dizini:** {directory}  ")
+    header_lines.append(f"**Oluşturulma:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    header_lines.append("---\n")
 
     # 1) Temel Pentest
     sections.append("## 1. Web Uygulama Analizi")
@@ -591,8 +637,7 @@ def generate_security_report(url: str, directory: str) -> str:
         sections.append(pentest_result)
         # Basit bulgu sayacı
         if "Eksik" in pentest_result:
-            import re as _re
-            m = _re.search(r'Eksik \((\d+)\)', pentest_result)
+            m = re.search(r'Eksik \((\d+)\)', pentest_result)
             if m:
                 medium += int(m.group(1))
     except Exception as e:
@@ -605,8 +650,7 @@ def generate_security_report(url: str, directory: str) -> str:
     try:
         sast_result = analyze_project_vulnerabilities(directory)
         sections.append(sast_result)
-        import re as _re
-        m = _re.search(r'(\d+) bulgu', sast_result)
+        m = re.search(r'(\d+) bulgu', sast_result)
         if m:
             count = int(m.group(1))
             high += count // 2
@@ -621,8 +665,7 @@ def generate_security_report(url: str, directory: str) -> str:
     try:
         header_result = check_security_headers(url)
         sections.append(header_result)
-        import re as _re
-        m = _re.search(r'Eksik Header.*?(\d+)', header_result)
+        m = re.search(r'Eksik Header.*?(\d+)', header_result)
         if m:
             medium += int(m.group(1))
     except Exception as e:
@@ -643,8 +686,7 @@ def generate_security_report(url: str, directory: str) -> str:
         try:
             dep_result = check_dependencies(dep_file)
             sections.append(dep_result)
-            import re as _re
-            m = _re.search(r'(\d+) pakette CVE', dep_result)
+            m = re.search(r'(\d+) pakette CVE', dep_result)
             if m:
                 critical += int(m.group(1))
         except Exception as e:
@@ -659,8 +701,7 @@ def generate_security_report(url: str, directory: str) -> str:
     try:
         secret_result = find_exposed_secrets(directory)
         sections.append(secret_result)
-        import re as _re
-        m = _re.search(r'Bulunan Secret.*?(\d+)', secret_result)
+        m = re.search(r'Bulunan Secret.*?(\d+)', secret_result)
         if m:
             critical += int(m.group(1))
     except Exception as e:
@@ -687,8 +728,8 @@ def generate_security_report(url: str, directory: str) -> str:
         summary_lines.append("3. Eksik HTTP güvenlik header'larını ekle")
     summary_lines.append("\n---\n")
 
-    # Özeti başa ekle
-    full_report = "\n".join(sections[:5] + summary_lines + sections[5:])
+    # Özeti başlık ile bölümler arasına yerleştir
+    full_report = "\n".join(header_lines + summary_lines + sections)
 
     try:
         with open(report_path, "w", encoding="utf-8") as f:
@@ -706,12 +747,10 @@ def find_subdomains(domain: str) -> str:
     Args:
         domain: Taranacak domain (örn: "example.com")
     """
-    domain = domain.strip().lstrip("https://").lstrip("http://").split("/")[0]
+    domain = domain.strip().removeprefix("https://").removeprefix("http://").split("/")[0]
     url = f"https://crt.sh/?q=%.{urllib.request.quote(domain)}&output=json"
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
     req = urllib.request.Request(url, headers={"User-Agent": "SiberSelma/1.0"})
     try:
@@ -757,9 +796,7 @@ def check_history(url: str) -> str:
         url = "https://" + url
 
     api_url = f"https://archive.org/wayback/available?url={urllib.request.quote(url, safe=':/')}"
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
     req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
     try:
@@ -828,17 +865,22 @@ def check_threat(target: str) -> str:
     endpoint_type = "IPv4" if is_ip else "domain"
     api_url = f"https://otx.alienvault.com/api/v1/indicators/{endpoint_type}/{urllib.request.quote(target)}/general"
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
-    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0", "X-OTX-API-KEY": ""})
+    otx_headers = {"User-Agent": "SiberSelma/1.0"}
+    otx_key = os.environ.get("ALIENVAULT_OTX_KEY", "")
+    if otx_key:
+        otx_headers["X-OTX-API-KEY"] = otx_key
+
+    req = urllib.request.Request(api_url, headers=otx_headers)
     try:
         resp = urllib.request.urlopen(req, timeout=15, context=ctx)
         data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         if e.code == 401:
-            return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam degiskeni olarak tanimlayabilirsiniz."
+            return "OTX API key gerekli. ALIENVAULT_OTX_KEY ortam degiskeni olarak tanimlayin."
+        if e.code == 403:
+            return "OTX erisimi reddedildi. ALIENVAULT_OTX_KEY gecersiz olabilir."
         return f"OTX sorgusu basarisiz: HTTP {e.code}"
     except Exception as e:
         return f"OTX sorgusu basarisiz: {e}"
@@ -881,19 +923,37 @@ def get_attack_techniques(vulnerability: str) -> str:
     Args:
         vulnerability: Aranacak zafiyet veya saldiri turu (örn: "XSS", "SQL Injection", "phishing")
     """
-    # MITRE ATT&CK STIX/JSON endpoint (enterprise)
+    # MITRE ATT&CK STIX/JSON endpoint (enterprise) — 24h lokal cache
     api_url = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
+    cache_dir = os.path.join(BASE_DIR, ".cache")
+    cache_path = os.path.join(cache_dir, "mitre_enterprise_attack.json")
+    cache_ttl_seconds = 24 * 3600
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+    data = None
     try:
-        resp = urllib.request.urlopen(req, timeout=20, context=ctx)
-        data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        return f"MITRE ATT&CK verisi alinamadi: {e}"
+        if os.path.exists(cache_path):
+            age = (datetime.now().timestamp() - os.path.getmtime(cache_path))
+            if age < cache_ttl_seconds:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+    except Exception:
+        data = None
+
+    if data is None:
+        ctx = _ssl_ctx()
+        req = urllib.request.Request(api_url, headers={"User-Agent": "SiberSelma/1.0"})
+        try:
+            resp = urllib.request.urlopen(req, timeout=20, context=ctx)
+            raw = resp.read().decode("utf-8")
+            data = json.loads(raw)
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    f.write(raw)
+            except OSError:
+                pass
+        except Exception as e:
+            return f"MITRE ATT&CK verisi alinamadi: {e}"
 
     query = vulnerability.lower()
     matches = []
@@ -951,9 +1011,7 @@ def check_breach(email: str) -> str:
     encoded = urllib.request.quote(email)
     api_url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{encoded}?truncateResponse=false"
 
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = _ssl_ctx()
 
     req = urllib.request.Request(api_url, headers={
         "User-Agent": "SiberSelma/1.0",
@@ -968,7 +1026,8 @@ def check_breach(email: str) -> str:
         if e.code == 401:
             return "Gecersiz HIBP API key."
         if e.code == 429:
-            return "API rate limit asıldı. Bir sure bekleyip tekrar deneyin."
+            retry_after = e.headers.get("Retry-After", "?") if hasattr(e, "headers") else "?"
+            return f"HIBP rate limit asıldı. Retry-After: {retry_after} sn."
         return f"HIBP sorgusu basarisiz: HTTP {e.code}"
     except Exception as e:
         return f"HIBP sorgusu basarisiz: {e}"
@@ -1001,14 +1060,15 @@ def fetch_security_news(max_items: int = 10) -> str:
     Args:
         max_items: Her kaynaktan alinacak maksimum haber sayisi (varsayilan: 10)
     """
+    try:
+        import feedparser
+    except ImportError:
+        return "feedparser yuklu degil. `pip install feedparser` calistirin."
+
     feeds = [
         ("The Hacker News", "https://feeds.feedburner.com/TheHackersNews"),
         ("BleepingComputer", "https://www.bleepingcomputer.com/feed/"),
     ]
-
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
 
     news_dir = os.path.join(WIKI_DIR, "news")
     os.makedirs(news_dir, exist_ok=True)
@@ -1018,31 +1078,27 @@ def fetch_security_news(max_items: int = 10) -> str:
 
     for source_name, feed_url in feeds:
         out.append(f"### {source_name}")
-        req = urllib.request.Request(feed_url, headers={"User-Agent": "SiberSelma/1.0"})
         try:
-            resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-            feed_content = resp.read().decode("utf-8", errors="ignore")
+            parsed_feed = feedparser.parse(feed_url, agent="SiberSelma/1.0")
         except Exception as e:
             out.append(f"Feed alinamadi: {e}\n")
             continue
 
-        # Basit XML parse (feedparser olmadan)
-        items = re.findall(r'<item>(.*?)</item>', feed_content, re.DOTALL)
+        if parsed_feed.bozo and not parsed_feed.entries:
+            out.append(f"Feed parse edilemedi: {parsed_feed.bozo_exception}\n")
+            continue
+
         saved_count = 0
 
-        for item in items[:max_items]:
-            title_m = re.search(r'<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>', item, re.DOTALL)
-            link_m = re.search(r'<link>(.*?)</link>', item, re.DOTALL)
-            desc_m = re.search(r'<description>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</description>', item, re.DOTALL)
-            date_m = re.search(r'<pubDate>(.*?)</pubDate>', item)
+        for entry in parsed_feed.entries[:max_items]:
+            title = (entry.get("title") or "").strip()
+            link = (entry.get("link") or "").strip()
+            desc_raw = entry.get("summary") or entry.get("description") or ""
+            desc = re.sub(r'<[^>]+>', '', desc_raw).strip()[:500]
+            pub_date = entry.get("published") or entry.get("updated") or ""
 
-            if not title_m:
+            if not title:
                 continue
-
-            title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
-            link = link_m.group(1).strip() if link_m else ""
-            desc = re.sub(r'<[^>]+>', '', desc_m.group(1)).strip()[:500] if desc_m else ""
-            pub_date = date_m.group(1).strip() if date_m else ""
 
             out.append(f"- **{title}** ({pub_date[:16]})")
 
@@ -1072,7 +1128,14 @@ def fetch_security_news(max_items: int = 10) -> str:
 
 
 if __name__ == "__main__":
+    import sys
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+    )
     ensure_wiki_dir()
-    print("SiberSelma MCP Sunucusu baslatiliyor...")
-    print("Standart I/O uzerinden iletisim dinleniyor (Claude Code vb. icin hazir)")
+    logging.info("SiberSelma MCP Sunucusu baslatiliyor...")
+    logging.info("Standart I/O uzerinden iletisim dinleniyor (Claude Code vb. icin hazir)")
     mcp.run()
